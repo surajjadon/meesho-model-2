@@ -20,11 +20,10 @@ connectDB();
 const app: Application = express();
 const PORT = process.env.PORT || 5000;
 
-const allowedOrigins = [
-  'http://localhost:3000',
-  'https://inventory-management-system-7qb6.onrender.com',
-  'https://lebely-frontend.onrender.com'
-];
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : [];
+
 
 app.use(cors({
     origin: (origin, callback) => {
