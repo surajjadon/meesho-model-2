@@ -18,7 +18,7 @@ export interface IReturnOrder extends Document {
   receivedStatus: 'Pending' | 'Received';
   
   // Verification status (what user marks it as)
-  verificationStatus: 'None' | 'Delivered' | 'Cancelled' | 'Return' | 'RTO' | 'Undelivered';
+  verificationStatus: 'None' | 'Delivered' | 'Cancelled' | 'Return' | 'RTO' | 'Undelivered' | 'Damaged';
   
   verifiedAt?: Date;
   receivedAt?: Date; // ✅ NEW: When item was scanned/received
@@ -53,7 +53,7 @@ const ReturnOrderSchema = new Schema<IReturnOrder>({
   
   verificationStatus: {
     type: String,
-    enum: ['None', 'Delivered', 'Cancelled', 'Return', 'RTO', 'Undelivered'],
+    enum: ['None', 'Delivered', 'Cancelled', 'Return', 'RTO', 'Undelivered', 'Damaged'],
     default: 'None',
     index: true,
   },

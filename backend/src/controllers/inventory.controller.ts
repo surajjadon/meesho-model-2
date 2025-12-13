@@ -46,6 +46,8 @@ export const addInventoryItem = async (req: Request, res: Response) => {
     
     // Log the initial stock
     const initialStock = newItem.stock || 0;
+    const initialPrice = newItem.price || 0; // Capture price
+
     if (initialStock > 0) {
         await StockHistory.create([{
             gstin: newItem.gstin,
@@ -53,7 +55,8 @@ export const addInventoryItem = async (req: Request, res: Response) => {
             change: initialStock,
             previousStock: 0,
             newStock: initialStock,
-            reason: 'Initial Stock'
+            reason: 'Initial Stock',
+            costPrice: initialPrice // <--- ✅ ADDED: Saves price at this moment
         }], { session });
     }
 
@@ -86,6 +89,10 @@ export const updateInventoryItem = async (req: Request, res: Response) => {
     
     // Check if stock is being updated
     const previousStock = itemToUpdate.stock || 0;
+    
+    // Determine the Price to log (use new price if updating, otherwise use old price)
+    const currentPrice = updateData.price !== undefined ? Number(updateData.price) : (itemToUpdate.price || 0);
+
     if (updateData.stock !== undefined) {
         const newStock = Number(updateData.stock);
         if (!isNaN(newStock) && newStock !== previousStock) {
@@ -95,10 +102,11 @@ export const updateInventoryItem = async (req: Request, res: Response) => {
                 change: newStock - previousStock,
                 previousStock,
                 newStock,
-                reason: 'Manual Update'
+                reason: 'Manual Update',
+                costPrice: currentPrice // <--- ✅ ADDED: Saves price at this moment
             }], { session });
             
-            console.log(`📊 Stock updated for ${itemToUpdate.title}: ${previousStock} → ${newStock}`);
+            console.log(`📊 Stock updated for ${itemToUpdate.title}: ${previousStock} → ${newStock} @ Price: ${currentPrice}`);
         }
     }
     

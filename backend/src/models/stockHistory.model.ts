@@ -7,7 +7,8 @@ export interface IStockHistory extends Document {
   previousStock: number;
   newStock: number;
   reason: 'Manual Update' | 'Order Fulfillment' | 'Initial Stock';
-  notes?: string; // e.g., "Order ID: ORD-12345"
+  notes?: string;
+  costPrice?: number; // e.g., "Order ID: ORD-12345"
 }
 
 const StockHistorySchema = new Schema<IStockHistory>({
@@ -18,6 +19,7 @@ const StockHistorySchema = new Schema<IStockHistory>({
   newStock: { type: Number, required: true },
   reason: { type: String, required: true },
   notes: { type: String },
+  costPrice: { type: Number, default: 0 },
 }, { timestamps: true });
 
 export const StockHistory = model<IStockHistory>('StockHistory', StockHistorySchema);
