@@ -132,7 +132,7 @@ const UploadDetailView = ({
 
     // 2. Compute Filtered & Paginated Data
     const processedData = useMemo(() => {
-        if (!detailData?.rawOrderPayments) return { pageData: [], totalItems: 0, totalPages: 0 };
+        if (!detailData?.rawOrderPayments) return { pageData: [], totalItems: 0, totalPages: 0,validPage: 1};
 
         // A. Filter
         const filtered = detailData.rawOrderPayments.filter(row => {
