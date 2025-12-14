@@ -66,7 +66,7 @@ export const useBusiness = () => {
 
 // Pre-configured axios instance that automatically uses the base URL
 export const api = axios.create({
-  baseURL: `/xyz`, 
+  baseURL: `/api`, 
 });
 
 // This is the component you will use in your layout.tsx
