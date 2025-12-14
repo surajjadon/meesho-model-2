@@ -8,7 +8,7 @@ import axios from 'axios';
 // 1. AUTHENTICATION CONTEXT
 // ====================================================================
 
-const API_URL = '';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 interface User {
   _id: string;
@@ -66,7 +66,7 @@ export const useBusiness = () => {
 
 // Pre-configured axios instance that automatically uses the base URL
 export const api = axios.create({
-  baseURL: `/api`, 
+  baseURL: `${API_URL}/api`,
 });
 
 // This is the component you will use in your layout.tsx
