@@ -18,11 +18,14 @@ dotenv.config();
 connectDB();
 
 const app: Application = express();
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 24554;
+
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
   : [];
+
+  console.log("✅ Allowed CORS origins:", allowedOrigins);
 
 
 app.use(cors({
@@ -73,4 +76,8 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   res.status(500).json({ message: 'Internal Server Error', error: err.message });
 });
 
-app.listen(PORT, () => { console.log(`🚀 Server running on: http://localhost:${PORT}`); });
+//app.listen(PORT, () => { console.log(`🚀 Server running on: http://localhost:${PORT}`); });
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
