@@ -10,6 +10,6 @@ const router = express.Router();
 
 router.get('/summary', protect, getPLSummary);
 
-router.get('/matched-orders',protect, getInventoryMatchedOrders);
+router.get('/matched-orders', getInventoryMatchedOrders);
 
 export default router;

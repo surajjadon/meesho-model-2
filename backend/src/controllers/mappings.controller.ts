@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
-import { InventoryItem } from '../models/inventoryItem.model';
-import PaymentHistory from '../models/PaymentHistory.model';
-import { StockHistory } from '../models/stockHistory.model';
 import { SkuMapping } from '../models/skuMapping.model';
+import PaymentHistory from '../models/PaymentHistory.model';
 import ReturnOrder from '../models/returnOrder.model';
 
 // --- Helper: Clean Numbers ---
@@ -27,7 +25,6 @@ const parseOrderDate = (dateStr: any): Date | null => {
     return null;
 };
 
-// --- CONTROLLER: Standard COGS + Status-Based Profit ---
 export const getInventoryMatchedOrders = async (req: Request, res: Response) => {
     try {
         const { gstin } = req.query;
@@ -35,50 +32,35 @@ export const getInventoryMatchedOrders = async (req: Request, res: Response) => 
 
         console.log("🔄 Starting P&L Match for GSTIN:", gstin);
 
-        // 1. Fetch Inventory Items
-        const inventoryItems = await InventoryItem.find({ gstin: gstin as string })
-            .select('hsnCode title _id').lean(); 
+        // ---------------------------------------------------------
+        // 1. Fetch SKU Data (Price & Packaging) DIRECTLY
+        // ---------------------------------------------------------
+        const inventoryItems = await SkuMapping.find({ gstin: gstin as string })
+            .select('sku manufacturingPrice packagingCost') 
+            .lean(); 
 
-        const skuToIdMap = new Map<string, string>();
+        // Create a fast lookup map: SKU -> { cost, packaging }
+        const productMap = new Map<string, { cp: number, pkg: number }>();
         const validSkuSet = new Set<string>();
-        const inventoryIds: string[] = [];
 
         inventoryItems.forEach((item: any) => {
-            if (item.hsnCode) {
-                const normalizedSku = item.hsnCode.trim().toLowerCase();
+            if (item.sku) {
+                const normalizedSku = item.sku.trim().toLowerCase();
                 validSkuSet.add(normalizedSku);
-                const idStr = String(item._id);
-                skuToIdMap.set(normalizedSku, idStr);
-                inventoryIds.push(idStr);
+                
+                productMap.set(normalizedSku, {
+                    cp: Number(item.manufacturingPrice) || 0, // Gets 562 from your schema
+                    pkg: Number(item.packagingCost) || 0      // Gets 12 from your schema
+                });
             }
         });
 
-        // 2. Fetch Stock History (For CP)
-        const allHistories = await StockHistory.find({
-            inventoryItem: { $in: inventoryIds }
-        })
-        .sort({ updatedAt: 1 }) 
-        .select('inventoryItem costPrice updatedAt').lean(); 
-
-        const historyMap = new Map<string, any[]>();
-        allHistories.forEach((h: any) => {
-            const itemId = String(h.inventoryItem);
-            if (!historyMap.has(itemId)) historyMap.set(itemId, []);
-            historyMap.get(itemId)?.push(h);
-        });
-
-        // 3. Fetch SkuMapping (For Packaging Cost)
-        const mappings = await SkuMapping.find({ gstin: gstin as string }).lean();
-        const packagingMap = new Map<string, number>();
-        mappings.forEach((m: any) => {
-            if (m.sku) {
-                packagingMap.set(m.sku.trim().toLowerCase(), m.packagingCost || 0);
-            }
-        });
-
-        // 4. Fetch ReturnOrders (For Damaged Status)
-        const returnOrders = await ReturnOrder.find({ businessGstin: gstin as string }).lean();
+        // ---------------------------------------------------------
+        // 2. Fetch ReturnOrders (For Damaged Status)
+        // ---------------------------------------------------------
+        const returnOrders = await ReturnOrder.find({ businessGstin: gstin as string }).select('subOrderNo verificationStatus notes').lean();
         const damageMap = new Map<string, boolean>();
+        
         returnOrders.forEach((r: any) => {
             const subOrderId = String(r.subOrderNo || '').trim();
             const isDamaged = (r.verificationStatus === 'Damaged') || 
@@ -87,19 +69,20 @@ export const getInventoryMatchedOrders = async (req: Request, res: Response) => 
             damageMap.set(subOrderId, isDamaged);
         });
 
-        // 5. Fetch Payment History
+        // ---------------------------------------------------------
+        // 3. Fetch Payment History & Calculate
+        // ---------------------------------------------------------
         const histories = await PaymentHistory.find({ businessGstin: gstin as string }).lean();
 
         let matchedOrders: any[] = [];
         let unmatchedCount = 0;
         
-        // 📊 GLOBAL STATS
-        let totalNetOrderAmount = 0; // Sum of Final Settlement (All rows)
-        let totalRevenue = 0;        // Sum of Final Settlement (Matched rows)
-        let totalCOGS = 0;           // STRICTLY: Σ (CP × Qty)
-        let totalProfit = 0;         // Sum of Calculated Profits (using rules)
+        // Stats
+        let totalNetOrderAmount = 0;
+        let totalRevenue = 0;
+        let totalCOGS = 0;
+        let totalProfit = 0;
 
-        // 6. Loop & Calculate
         for (const history of histories) {
             if (!history.rawOrderPayments || !Array.isArray(history.rawOrderPayments)) continue;
 
@@ -113,76 +96,35 @@ export const getInventoryMatchedOrders = async (req: Request, res: Response) => 
 
                 if (validSkuSet.has(sheetSkuNormalized)) {
                     
-                    const itemId = skuToIdMap.get(sheetSkuNormalized);
-                    const orderDate = parseOrderDate((order as any)['Order Date']);
+                    // --- GET DATA FROM MAP ---
+                    const productData = productMap.get(sheetSkuNormalized);
+                    const costPrice = productData?.cp || 0;     // No more 0!
+                    const packagingCost = productData?.pkg || 0;
+
                     const status = String((order as any)['Live Order Status'] || '').toLowerCase();
                     const quantity = Number((order as any)['Quantity'] || 1);
-
-                    // A. Get CP (Cost Price)
-                    let costPrice = 0;
-                    let priceFoundDate = null;
-                    let matchInfo = "None";
-
-                    if (itemId && orderDate && historyMap.has(itemId)) {
-                        const itemHistory = historyMap.get(itemId) || [];
-                        let foundEntry = null;
-                        
-                        for (const entry of itemHistory) {
-                            if (new Date(entry.updatedAt) <= orderDate) foundEntry = entry;
-                            else break;
-                        }
-                        if (!foundEntry && itemHistory.length > 0) {
-                             foundEntry = itemHistory[0]; 
-                             matchInfo = "Fallback (Oldest Available)";
-                        }
-
-                        if (foundEntry) {
-                            costPrice = foundEntry.costPrice || 0;
-                            priceFoundDate = foundEntry.updatedAt;
-                        }
-                    }
-
-                    // B. Get Packaging Cost & Damaged Status
-                    const packagingCost = packagingMap.get(sheetSkuNormalized) || 0;
                     const isDamaged = damageMap.get(subOrderNo) || false;
 
-                    // --- 📊 STAT 1: TOTAL COGS ---
-                    // Definition: COGS = CP * Qty (Applied to ALL matched orders)
+                    // --- CALC 1: COGS ---
                     const standardCOGS = costPrice * quantity;
                     totalCOGS += standardCOGS;
 
-                    // --- 💰 STAT 2: PROFIT (Using Status Rules) ---
+                    // --- CALC 2: PROFIT ---
                     let actualDeduction = 0; 
 
                     if (status.includes('delivered') || status.includes('shipped')) {
-                        // Delivered: Payout - CP
-                        // (Deduction is CP)
                         actualDeduction = costPrice * quantity;
                     } 
                     else if (status.includes('return')) {
-                        if (isDamaged) {
-                            // Return (Damaged): Payout - Pkg - CP
-                            actualDeduction = (packagingCost + costPrice) * quantity;
-                        } else {
-                            // Return (Good): Payout - Pkg
-                            actualDeduction = packagingCost * quantity;
-                        }
+                        actualDeduction = isDamaged ? (packagingCost + costPrice) * quantity : packagingCost * quantity;
                     }
                     else if (status.includes('rto')) {
-                        if (isDamaged) {
-                            // RTO (Damaged): Payout - Pkg - CP
-                            actualDeduction = (packagingCost + costPrice) * quantity;
-                        } else {
-                            // RTO (Good): Payout - Pkg
-                            actualDeduction = packagingCost * quantity;
-                        }
+                        actualDeduction = isDamaged ? (packagingCost + costPrice) * quantity : packagingCost * quantity;
                     }
 
-                    // Calculate Profit
                     const profit = settlementAmount - actualDeduction;
                     const itemMargin = settlementAmount !== 0 ? (profit / Math.abs(settlementAmount)) * 100 : 0;
 
-                    // Add to Totals
                     totalRevenue += settlementAmount;
                     totalProfit += profit;
 
@@ -193,14 +135,9 @@ export const getInventoryMatchedOrders = async (req: Request, res: Response) => 
                         costPrice: costPrice,
                         packagingCost: packagingCost,
                         _isDamaged: isDamaged,
-                        
-                        // Financials
                         profit: profit,
                         marginPercent: itemMargin.toFixed(2) + "%",
-                        
-                        // Debugging
-                        _priceFoundDate: priceFoundDate,
-                        _matchInfo: matchInfo
+                        _matchInfo: "Direct SKU Map"
                     });
                 } else {
                     unmatchedCount++;
@@ -210,18 +147,16 @@ export const getInventoryMatchedOrders = async (req: Request, res: Response) => 
 
         const profitMargin = totalRevenue !== 0 ? (totalProfit / totalRevenue) * 100 : 0;
 
-        console.log(`✅ P&L Generated. Total Net Order Amount: ₹${totalNetOrderAmount.toFixed(2)}`);
-
         res.status(200).json({
             stats: {
-                totalNetOrderAmount: Number(totalNetOrderAmount.toFixed(2)),
-                totalRevenue: Number(totalRevenue.toFixed(2)),
-                totalCOGS: Number(totalCOGS.toFixed(2)), // ✅ EXACTLY Σ (CP × Qty)
-                totalProfit: Number(totalProfit.toFixed(2)), // ✅ Sum of Formula-based Profits
+                totalNetOrderAmount,
+                totalRevenue,
+                totalCOGS,
+                totalProfit,
                 profitMargin: Number(profitMargin.toFixed(2)) + "%"
             },
             count: matchedOrders.length,
-            unmatchedCount: unmatchedCount,
+            unmatchedCount,
             orders: matchedOrders
         });
 

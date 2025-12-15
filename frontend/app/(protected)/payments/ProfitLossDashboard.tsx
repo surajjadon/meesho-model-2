@@ -147,8 +147,15 @@ export default function PLSummary() {
         return Object.values(groups);
     }, [apiData]);
 
-    const formatCurrency = (val: number) => 
-        new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(val);
+   // Inside PLSummary component
+
+const formatCurrency = (val: number) => 
+    new Intl.NumberFormat('en-IN', { 
+        style: 'currency', 
+        currency: 'INR', 
+        minimumFractionDigits: 2, // Enforce 2 decimals
+        maximumFractionDigits: 2  // Limit to 2 decimals
+    }).format(val);
 
     const toggleRow = (sku: string) => setExpandedSku(expandedSku === sku ? null : sku);
 
@@ -401,14 +408,28 @@ export default function PLSummary() {
 }
 
 // --- Stat Card Component ---
+// --- Stat Card Component ---
 const StatCard = ({ label, value, isPercent, highlight }: any) => {
-    const formatted = isPercent 
-        ? value 
-        : new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value);
+    // Determine the raw numeric value for coloring logic
+    const numVal = typeof value === 'string' ? parseFloat(value) : value;
+
+    let formattedValue = "";
+
+    if (isPercent) {
+        // If it's a percentage, show it as is or with 2 decimals
+        formattedValue = value; 
+    } else {
+        // For currency, use the exact 2-decimal formatter
+        formattedValue = new Intl.NumberFormat('en-IN', { 
+            style: 'currency', 
+            currency: 'INR', 
+            minimumFractionDigits: 2, 
+            maximumFractionDigits: 2 
+        }).format(numVal);
+    }
     
     let valueColor = "text-gray-900";
     if (highlight) {
-        const numVal = typeof value === 'string' ? parseFloat(value) : value;
         valueColor = numVal >= 0 ? "text-green-600" : "text-red-600";
     }
 
@@ -416,7 +437,7 @@ const StatCard = ({ label, value, isPercent, highlight }: any) => {
         <div className="px-5 py-5 bg-white shadow rounded-lg overflow-hidden border border-gray-200">
             <dt className="text-sm font-medium text-gray-500 truncate">{label}</dt>
             <dd className={`mt-1 text-3xl font-semibold ${valueColor}`}>
-                {formatted}
+                {formattedValue}
             </dd>
         </div>
     );

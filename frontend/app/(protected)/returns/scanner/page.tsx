@@ -15,7 +15,7 @@ interface IReturnOrder {
   supplierSku: string;
   liveOrderStatus: string;
   // The status we update locally and in DB
-  verificationStatus: "None" | "Delivered" | "Cancelled" | "Return" | "RTO" | "Undelivered";
+  verificationStatus: "None" | "Delivered" | "Cancelled" | "Return" | "RTO" | "Undelivered"|"RTO and Damaged"|"Return and Damaged";
   updatedAt: string;
   createdAt?: string;
 }
