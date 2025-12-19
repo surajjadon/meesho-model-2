@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { SkuMapping } from '../models/skuMapping.model';
+import { SkuMappingHistory } from '../models/SkuMappingHistory.model';
 import PaymentHistory from '../models/PaymentHistory.model';
 import ReturnOrder from '../models/returnOrder.model';
 
@@ -25,59 +26,104 @@ const parseOrderDate = (dateStr: any): Date | null => {
     return null;
 };
 
+// ... imports and helpers ...
+
 export const getInventoryMatchedOrders = async (req: Request, res: Response) => {
     try {
         const { gstin } = req.query;
         if (!gstin) return res.status(400).json({ message: 'GSTIN is required.' });
 
-        console.log("🔄 Starting P&L Match for GSTIN:", gstin);
+        // 1. Fetch History
+        const inventoryItems = await SkuMappingHistory.find({ gstin: gstin as string })
+            .select('sku manufacturingPrice packagingCost updatedAt')
+            .lean();
 
-        // ---------------------------------------------------------
-        // 1. Fetch SKU Data (Price & Packaging) DIRECTLY
-        // ---------------------------------------------------------
-        const inventoryItems = await SkuMapping.find({ gstin: gstin as string })
-            .select('sku manufacturingPrice packagingCost') 
-            .lean(); 
+        // 2. Build Map
+        type ProductRecord = {
+            cp: number;
+            pkg: number;
+            orderDate: Date;
+        };
 
-        // Create a fast lookup map: SKU -> { cost, packaging }
-        const productMap = new Map<string, { cp: number, pkg: number }>();
-        const validSkuSet = new Set<string>();
+        const productMap = new Map<string, ProductRecord[]>();
 
         inventoryItems.forEach((item: any) => {
-            if (item.sku) {
-                const normalizedSku = item.sku.trim().toLowerCase();
-                validSkuSet.add(normalizedSku);
-                
-                productMap.set(normalizedSku, {
-                    cp: Number(item.manufacturingPrice) || 0, // Gets 562 from your schema
-                    pkg: Number(item.packagingCost) || 0      // Gets 12 from your schema
-                });
+            if (!item.sku) return;
+            const sku = item.sku.trim().toLowerCase();
+
+            const record: ProductRecord = {
+                cp: Number(item.manufacturingPrice) || 0,
+                pkg: Number(item.packagingCost) || 0,
+                orderDate: item.updatedAt ? new Date(item.updatedAt) : new Date(),
+            };
+
+            if (!productMap.has(sku)) productMap.set(sku, []);
+            productMap.get(sku)!.push(record);
+        });
+
+        // 3. Sort Lists by Date
+        for (const list of productMap.values()) {
+            list.sort((a, b) => a.orderDate.getTime() - b.orderDate.getTime());
+        }
+
+        // --- Helper: Binary Search ---
+        function findPriceAtDate(records: ProductRecord[], targetDate: Date) {
+            // Edge case: No records
+            if (records.length === 0) return { cp: 0, pkg: 0 };
+
+            // Find first record where date >= targetDate
+            let l = 0, r = records.length;
+            while (l < r) {
+                const mid = (l + r) >> 1;
+                if (records[mid].orderDate < targetDate) l = mid + 1;
+                else r = mid;
             }
-        });
 
-        // ---------------------------------------------------------
-        // 2. Fetch ReturnOrders (For Damaged Status)
-        // ---------------------------------------------------------
-        const returnOrders = await ReturnOrder.find({ businessGstin: gstin as string }).select('subOrderNo verificationStatus notes').lean();
-        const damageMap = new Map<string, boolean>();
-        
-        returnOrders.forEach((r: any) => {
-            const subOrderId = String(r.subOrderNo || '').trim();
-            const isDamaged = (r.verificationStatus === 'Damaged') || 
-                              (r.verificationStatus === 'Undelivered') || 
-                              (String(r.notes).toLowerCase().includes('damaged'));
-            damageMap.set(subOrderId, isDamaged);
-        });
+            // 'l' is the index of the first record AFTER or ON the order date.
+            // We want the record that was active AT the time of order.
+            
+            if (l === 0) {
+                // The order is OLDER than our first history record.
+                // Fallback: Use the oldest known price (the first one).
+                return records[0]; 
+            } else {
+                // The order happened after record[l-1] but before record[l].
+                // Use record[l-1] as that was the active price.
+                return records[l - 1];
+            }
+        }
+9
+        // ... (ReturnOrders fetch remains the same) ...
+      // ... inside getInventoryMatchedOrders ...
 
-        // ---------------------------------------------------------
-        // 3. Fetch Payment History & Calculate
-        // ---------------------------------------------------------
+const returnOrders = await ReturnOrder.find({ businessGstin: gstin as string })
+    .select('subOrderNo verificationStatus notes')
+    .lean();
+
+const damageMap = new Map<string, boolean>();
+
+returnOrders.forEach((r: any) => {
+     const subOrderId = String(r.subOrderNo || '').trim();
+     
+     // 1. Normalize status to lowercase to make matching safer
+     const status = String(r.verificationStatus || '').toLowerCase();
+     const notes = String(r.notes || '').toLowerCase();
+
+     // 2. UPDATED LOGIC
+     const isDamaged = 
+        status.includes('damaged') ||   // Catches "Damaged", "Return and Damaged", "RTO and Damaged"
+        status === 'undelivered' ||     // Keeps your specific rule for Undelivered
+        notes.includes('damaged');      
+
+     damageMap.set(subOrderId, isDamaged);
+});
+
+        // ... (Payment History fetch remains the same) ...
         const histories = await PaymentHistory.find({ businessGstin: gstin as string }).lean();
-
+        
+        // ... (Stats vars remain the same) ...
         let matchedOrders: any[] = [];
         let unmatchedCount = 0;
-        
-        // Stats
         let totalNetOrderAmount = 0;
         let totalRevenue = 0;
         let totalCOGS = 0;
@@ -93,33 +139,32 @@ export const getInventoryMatchedOrders = async (req: Request, res: Response) => 
                 const sheetSku = String((order as any)['Supplier SKU'] || '').trim();
                 const sheetSkuNormalized = sheetSku.toLowerCase();
                 const subOrderNo = String((order as any)['Sub Order No'] || '').trim();
+                const orderDateStr = String((order as any)['Order Date'] || '').trim();
+                const orderDate = parseOrderDate(orderDateStr) || new Date();
 
-                if (validSkuSet.has(sheetSkuNormalized)) {
+                // --- FIX: Check Map directly instead of a separate Set ---
+                if (productMap.has(sheetSkuNormalized)) {
+                    const records = productMap.get(sheetSkuNormalized)!;
+                    console.log(records);
                     
-                    // --- GET DATA FROM MAP ---
-                    const productData = productMap.get(sheetSkuNormalized);
-                    const costPrice = productData?.cp || 0;     // No more 0!
-                    const packagingCost = productData?.pkg || 0;
+                    // Use the helper to find specific price at that time
+                    const { cp, pkg } = findPriceAtDate(records, orderDate);
 
                     const status = String((order as any)['Live Order Status'] || '').toLowerCase();
                     const quantity = Number((order as any)['Quantity'] || 1);
                     const isDamaged = damageMap.get(subOrderNo) || false;
 
-                    // --- CALC 1: COGS ---
-                    const standardCOGS = costPrice * quantity;
+                    // COGS Calculation
+                    const standardCOGS = cp * quantity;
                     totalCOGS += standardCOGS;
 
-                    // --- CALC 2: PROFIT ---
-                    let actualDeduction = 0; 
-
+                    let actualDeduction = 0;
                     if (status.includes('delivered') || status.includes('shipped')) {
-                        actualDeduction = costPrice * quantity;
-                    } 
-                    else if (status.includes('return')) {
-                        actualDeduction = isDamaged ? (packagingCost + costPrice) * quantity : packagingCost * quantity;
-                    }
-                    else if (status.includes('rto')) {
-                        actualDeduction = isDamaged ? (packagingCost + costPrice) * quantity : packagingCost * quantity;
+                        actualDeduction = cp * quantity;
+                    } else if (status.includes('return') || status.includes('rto')) {
+                        // If damaged: lose Product + Packaging
+                        // If good: lose only Packaging
+                        actualDeduction = isDamaged ? (pkg + cp) * quantity : pkg * quantity;
                     }
 
                     const profit = settlementAmount - actualDeduction;
@@ -129,15 +174,15 @@ export const getInventoryMatchedOrders = async (req: Request, res: Response) => 
                     totalProfit += profit;
 
                     matchedOrders.push({
-                        ...order, 
+                        ...order,
                         _isInventoryMatched: true,
                         _matchedSku: sheetSku,
-                        costPrice: costPrice,
-                        packagingCost: packagingCost,
+                        costPrice: cp,
+                        packagingCost: pkg,
                         _isDamaged: isDamaged,
-                        profit: profit,
+                        profit,
                         marginPercent: itemMargin.toFixed(2) + "%",
-                        _matchInfo: "Direct SKU Map"
+                        _matchInfo: "SKU History Lookup"
                     });
                 } else {
                     unmatchedCount++;

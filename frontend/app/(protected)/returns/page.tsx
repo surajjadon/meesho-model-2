@@ -1,385 +1,390 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import React, { useState, useEffect, useMemo, useRef, KeyboardEvent } from "react";
+import Link from 'next/link';
 import { useBusiness, api } from "@/providers/GlobalProvider";
-import {
-  Search,
-  Trash2,
-  Eye,
-  Truck,
-  User,
-  ScanLine,
-  CheckCircle,
-  Loader2,
-  Clock,
-  AlertTriangle,
-  RotateCcw,
-  Package,
-  Calendar,
-  ChevronDown,
-} from "lucide-react";
+import { ScanBarcode, Loader2, ChevronDown, ArrowLeft, RefreshCw, CheckCircle2, Search, X } from "lucide-react";
 
 // --- Interfaces ---
 interface IReturnOrder {
   _id: string;
   subOrderNo: string;
   awbNumber?: string;
-  orderDate: string; 
-  dispatchDate?: string;
+  orderDate: string;
   productName: string;
   supplierSku: string;
   liveOrderStatus: string;
-  returnType: "RTO" | "CustomerReturn";
-  receivedStatus: "Pending" | "Received";
-  verificationStatus: string;
+  verificationStatus: "None" | "Delivered" | "Cancelled" | "Return" | "RTO" | "Undelivered" | "RTO and Damaged" | "Return and Damaged";
   updatedAt: string;
+  createdAt?: string;
 }
 
-interface ISummary {
-  totalRTO: number;
-  pendingRTO: number;
-  receivedRTO: number;
-  totalCustomerReturns: number;
-  pendingCustomerReturns: number;
-  receivedCustomerReturns: number;
-  missingOrders: number;
-  missingAWB: number;
-}
-
-// --- Helper Functions ---
-
-const getStatusBadge = (status: string) => {
-  const s = (status || "").toLowerCase();
-  if (s === "pending") return "bg-orange-100 text-orange-700 border border-orange-200";
-  if (s === "received") return "bg-green-100 text-green-700 border border-green-200";
-  if (s.includes("rto")) return "bg-blue-100 text-blue-700 border border-blue-200";
-  if (s.includes("return")) return "bg-purple-100 text-purple-700 border border-purple-200";
-  return "bg-gray-100 text-gray-700 border border-gray-200";
+// --- Helper for Colors ---
+const getStatusBadgeColor = (status: string) => {
+    switch (status) {
+        case 'Delivered': return 'bg-green-100 text-green-800 border border-green-200';
+        case 'Return': return 'bg-yellow-100 text-yellow-800 border border-yellow-200';
+        case 'RTO': return 'bg-orange-100 text-orange-800 border border-orange-200';
+        case 'Cancelled': return 'bg-red-100 text-red-800 border border-red-200';
+        case 'Undelivered': return 'bg-gray-100 text-gray-800 border border-gray-200';
+        case 'RTO and Damaged': return 'bg-red-50 text-red-600 border border-red-200';
+        case 'Return and Damaged': return 'bg-red-50 text-red-600 border border-red-200';
+        default: return 'bg-slate-100 text-slate-600 border border-slate-200';
+    }
 };
 
-// Helper to safely parse date and check for 1970/Invalid
-const parseDate = (dateString: string | undefined) => {
-  if (!dateString) return null;
-  
-  const date = new Date(dateString);
-  
-  // Check if Invalid
-  if (isNaN(date.getTime())) return null;
-  
-  // Check if it defaulted to Epoch (1970) - usually happens with null/0 input
-  if (date.getFullYear() === 1970) return null;
-
-  return date;
+const getRowHighlightColor = (status: string) => {
+    switch (status) {
+        case "Delivered": return "bg-green-50/50 border-l-4 border-l-green-500";
+        case "Return": return "bg-yellow-50/50 border-l-4 border-l-yellow-500";
+        case "RTO": return "bg-orange-50/50 border-l-4 border-l-orange-500";
+        case "Cancelled": return "bg-red-50/50 border-l-4 border-l-red-500";
+        default: return "hover:bg-slate-50 border-l-4 border-l-transparent";
+    }
 };
 
-const getDaysSinceOrder = (orderDate: string): number => {
-  const date = parseDate(orderDate);
-  if (!date) return 0; // Return 0 if date is invalid
-  
-  const now = new Date();
-  const diffTime = Math.abs(now.getTime() - date.getTime());
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-};
-
-// --- Components ---
-
-const OverviewCard = ({
-  title,
-  value,
-  subValue,
-  icon: Icon,
-  variant = "blue",
-}: {
-  title: string;
-  value: number | string;
-  subValue: string;
-  icon: React.ElementType;
-  variant?: "blue" | "orange" | "green" | "red";
-}) => {
-  const variants = {
-    blue: { iconBg: "bg-blue-50 text-blue-600", badge: "bg-blue-50 text-blue-700" },
-    orange: { iconBg: "bg-orange-50 text-orange-600", badge: "bg-orange-50 text-orange-700" },
-    green: { iconBg: "bg-green-50 text-green-600", badge: "bg-green-50 text-green-700" },
-    red: { iconBg: "bg-red-50 text-red-600", badge: "bg-red-50 text-red-700" },
-  };
-  const theme = variants[variant];
-
-  return (
-    <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between h-full">
-      <div className="flex justify-between items-start mb-4">
-        <div>
-          <p className="text-slate-500 text-xs font-semibold uppercase tracking-wide mb-1">{title}</p>
-          <h3 className="text-3xl font-bold text-slate-900">{typeof value === "number" ? value.toLocaleString() : value}</h3>
-        </div>
-        <div className={`p-2.5 rounded-xl ${theme.iconBg}`}><Icon size={20} strokeWidth={2} /></div>
-      </div>
-      <div className={`self-start px-3 py-1.5 rounded-lg text-xs font-medium ${theme.badge}`}>{subValue}</div>
-    </div>
-  );
-};
-
-const TabButton = ({ active, href, icon: Icon, label }: { active: boolean; href: string; icon: React.ElementType; label: string }) => (
-  <Link
-    href={href}
-    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-      active ? "bg-white text-blue-600 shadow-sm ring-1 ring-slate-200" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-    }`}
-  >
-    <Icon size={16} /> {label}
-  </Link>
-);
-
-// --- Main Page ---
-export default function ReturnsManagerPage() {
-  const searchParams = useSearchParams();
-  const activeTab = searchParams.get("tab") || "rto";
+// --- Main Scanner Component ---
+export default function ScannerPage() {
   const { selectedBusiness } = useBusiness();
-  
   const [returns, setReturns] = useState<IReturnOrder[]>([]);
-  const [summary, setSummary] = useState<ISummary>({
-    totalRTO: 0, pendingRTO: 0, receivedRTO: 0,
-    totalCustomerReturns: 0, pendingCustomerReturns: 0, receivedCustomerReturns: 0,
-    missingOrders: 0, missingAWB: 0,
-  });
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [rtoSubTab, setRtoSubTab] = useState<"pending" | "received">("pending");
-  const [customerSubTab, setCustomerSubTab] = useState<"pending" | "received">("pending");
+  
+  // Scanner Inputs
+  const [scanInput, setScanInput] = useState("");
+  const [targetStatus, setTargetStatus] = useState<"None" | "Delivered" | "Cancelled" | "Return" | "RTO" | "Undelivered" | "RTO and Damaged" | "Return and Damaged">("Return");
+  const [isVerifying, setIsVerifying] = useState(false);
+  const scanInputRef = useRef<HTMLInputElement>(null);
 
-  // --- Fetch Logic ---
-  const fetchSummary = async () => {
-    if (!selectedBusiness) return;
-    try {
-      const res = await api.get("/returns/summary", { params: { gstin: selectedBusiness.gstin } });
-      setSummary(res.data);
-    } catch (err) { console.error("Error fetching summary:", err); }
-  };
+  // Filters & Search
+  const [statusFilter, setStatusFilter] = useState<"All" | "None" | "Processed">("All");
+  const [tableSearch, setTableSearch] = useState(""); // <-- New Search State
+
+  // Selection State
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
 
   const fetchReturns = async () => {
     if (!selectedBusiness) return;
     setLoading(true);
     try {
-      const params: any = { gstin: selectedBusiness.gstin };
-
-      if (activeTab === "missing") params.tab = "missing";
-      else if (activeTab === "rto") {
-        params.returnType = "RTO";
-        params.receivedStatus = rtoSubTab === "pending" ? "Pending" : "Received";
-      } else if (activeTab === "customer") {
-        params.returnType = "CustomerReturn";
-        params.receivedStatus = customerSubTab === "pending" ? "Pending" : "Received";
-      }
-
-      if (searchQuery) params.search = searchQuery;
-      const res = await api.get("/returns", { params });
+      const res = await api.get("/returns", { params: { gstin: selectedBusiness.gstin } });
       setReturns(res.data);
-    } catch (err) { console.error(err); } 
-    finally { setLoading(false); }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { fetchSummary(); }, [selectedBusiness]);
-  useEffect(() => { fetchReturns(); }, [selectedBusiness, activeTab, rtoSubTab, customerSubTab, searchQuery]);
+  useEffect(() => { fetchReturns(); }, [selectedBusiness]);
+  
+  // Auto-focus logic
+  useEffect(() => { 
+      const timer = setTimeout(() => scanInputRef.current?.focus(), 100);
+      return () => clearTimeout(timer);
+  }, [loading]);
 
-  const renderSummaryCards = () => {
-    if (activeTab === "missing") {
-      return (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <OverviewCard title="Missing Orders" value={summary.missingOrders} subValue="Pending > 30 days" icon={AlertTriangle} variant="red" />
-          <OverviewCard title="Missing AWB" value={summary.missingAWB} subValue="Requires Mapping" icon={ScanLine} variant="orange" />
-        </div>
-      );
+  // --- BULK UPDATE LOGIC ---
+  const handleBulkUpdate = async () => {
+    if (selectedIds.length === 0) return;
+    setIsBulkUpdating(true);
+
+    const selectedOrders = returns.filter(r => selectedIds.includes(r._id));
+    const idsToSend = selectedOrders.map(r => r.subOrderNo);
+
+    try {
+        await api.post("/returns/verify", { 
+            gstin: selectedBusiness?.gstin, 
+            ids: idsToSend, 
+            status: targetStatus 
+        });
+
+        setReturns(prev => prev.map(r => 
+            selectedIds.includes(r._id) 
+            ? { ...r, verificationStatus: targetStatus, updatedAt: new Date().toISOString() } 
+            : r
+        ));
+
+        setSelectedIds([]);
+        alert(`Successfully updated ${idsToSend.length} orders to '${targetStatus}'`);
+    } catch (error) {
+        console.error("Bulk update failed", error);
+        alert("Failed to update selected orders. Please try again.");
+    } finally {
+        setIsBulkUpdating(false);
     }
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <OverviewCard 
-          title={activeTab === "customer" ? "Total Returns" : "Total RTO"} 
-          value={activeTab === "customer" ? summary.totalCustomerReturns : summary.totalRTO} 
-          subValue={activeTab === "customer" ? "Customer Requests" : "RTO Initiated"} 
-          icon={activeTab === "customer" ? RotateCcw : Truck} variant="blue" 
-        />
-        <OverviewCard 
-          title={activeTab === "customer" ? "Pending Returns" : "Pending RTO"} 
-          value={activeTab === "customer" ? summary.pendingCustomerReturns : summary.pendingRTO} 
-          subValue="Awaiting action / In transit" icon={Clock} variant="orange" 
-        />
-        <OverviewCard 
-          title={activeTab === "customer" ? "Received Returns" : "Received RTO"} 
-          value={activeTab === "customer" ? summary.receivedCustomerReturns : summary.receivedRTO} 
-          subValue="Processed at warehouse" icon={CheckCircle} variant="green" 
-        />
-      </div>
-    );
+  };
+
+  // --- SCAN LOGIC ---
+  const handleScan = async () => {
+    const input = scanInput.trim();
+    if (!input) return;
+    setIsVerifying(true);
+    
+    let item = returns.find(r => r.awbNumber === input);
+    if (!item) {
+        item = returns.find(r => r.subOrderNo === input);
+    }
+    
+    if (!item) {
+      alert(`❌ Item not found!\n\nInput: "${input}"`);
+      setScanInput("");
+      setIsVerifying(false);
+      return;
+    }
+
+    try {
+      await api.post("/returns/verify", { 
+          gstin: selectedBusiness?.gstin, 
+          ids: [item.subOrderNo], 
+          status: targetStatus 
+      });
+
+      setReturns(prev => {
+        const updated = prev.map(r => 
+            (r._id === item?._id) 
+            ? { ...r, verificationStatus: targetStatus, updatedAt: new Date().toISOString() } 
+            : r
+        );
+        return updated.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      });
+      
+      setScanInput(""); 
+    } catch (err) {
+      alert("Failed to verify item.");
+    } finally {
+      setIsVerifying(false);
+      setTimeout(() => scanInputRef.current?.focus(), 100);
+    }
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => { 
+      if (e.key === "Enter") { 
+          e.preventDefault(); 
+          handleScan(); 
+      } 
+  };
+
+  // --- FILTERING LOGIC ---
+  const filteredData = useMemo(() => {
+    let data = returns;
+    
+    // 1. Status Filter
+    if (statusFilter === "None") data = data.filter(r => r.verificationStatus === "None");
+    if (statusFilter === "Processed") data = data.filter(r => r.verificationStatus !== "None");
+
+    // 2. Search Filter (AWB or Order ID)
+    if (tableSearch.trim()) {
+        const searchLower = tableSearch.toLowerCase();
+        data = data.filter(r => 
+            (r.awbNumber && r.awbNumber.toLowerCase().includes(searchLower)) || 
+            (r.subOrderNo && r.subOrderNo.toLowerCase().includes(searchLower)) ||
+            (r.supplierSku && r.supplierSku.toLowerCase().includes(searchLower))
+        );
+    }
+    
+    return data;
+  }, [returns, statusFilter, tableSearch]);
+
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSelectedIds(e.target.checked ? filteredData.map((r) => r._id) : []);
+  };
+
+  const handleSelectOne = (id: string) => {
+    setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 font-sans text-slate-800">
+    <div className="space-y-6 w-full min-h-screen bg-slate-50 p-4 md:p-6">
+      
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Returns & RTO Manager</h1>
-          <p className="text-slate-500 mt-1">Track RTO orders and customer returns effortlessly.</p>
+          <h1 className="text-2xl font-bold text-slate-900">Returns Scanner</h1>
+          <p className="text-sm text-slate-500">Scan AWB Barcode to update status.</p>
         </div>
         <div className="flex gap-3">
-            <Link href="/returns/scanner" className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium shadow-sm hover:bg-blue-700 transition-colors">
-               <ScanLine size={16} /> Scanner
+            <button 
+                onClick={fetchReturns} 
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg font-medium transition-colors"
+            >
+                <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+                Refresh Data
+            </button>
+            <Link 
+                href="/returns" 
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-lg shadow-sm hover:bg-slate-50 text-slate-700 font-medium"
+            >
+                <ArrowLeft size={16} />
+                Back to Manager
             </Link>
         </div>
       </div>
 
-      {/* Summary */}
-      <div className="mb-2">
-        <h2 className="text-lg font-bold text-slate-800 mb-4">
-            {activeTab === 'customer' ? 'Customer Returns Overview' : activeTab === 'missing' ? 'Missing Orders Overview' : 'Returns & RTO Overview'}
-        </h2>
-        {renderSummaryCards()}
+      {/* Scanner Input Section */}
+      <div className="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+        <div className="flex flex-col md:flex-row gap-6">
+          <div className="flex-1">
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                Scan AWB Barcode / Enter AWB
+            </label>
+            <div className="relative">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-500">
+                  {isVerifying ? <Loader2 className="animate-spin" size={24} /> : <ScanBarcode size={24} />}
+              </div>
+              <input 
+                ref={scanInputRef} 
+                type="text" 
+                value={scanInput} 
+                onChange={(e) => setScanInput(e.target.value)} 
+                onKeyDown={handleKeyDown} 
+                placeholder="Click here and scan barcode..." 
+                className="w-full pl-14 pr-4 py-4 text-lg font-mono bg-blue-50/30 border-2 border-blue-500/30 focus:border-blue-600 rounded-xl focus:ring-4 focus:ring-blue-100 outline-none transition-all placeholder:text-slate-400 text-slate-800" 
+              />
+            </div>
+          </div>
+
+          <div className="w-full md:w-72">
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Set Status To</label>
+            <div className="relative">
+              <select 
+                value={targetStatus} 
+                onChange={(e) => { setTargetStatus(e.target.value as any); scanInputRef.current?.focus(); }} 
+                className="w-full appearance-none bg-white border border-slate-200 text-slate-700 py-4 pl-4 pr-10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium shadow-sm cursor-pointer"
+              >
+                <option value="Return">Return (Customer)</option>
+                <option value="Return and Damaged">Return and Damaged</option>
+                <option value="RTO">RTO (Courier)</option>
+                <option value="RTO and Damaged">RTO and Damaged</option>
+                <option value="Delivered">Delivered</option>
+                <option value="Cancelled">Cancelled</option>
+                <option value="Undelivered">Undelivered</option>
+              </select>
+              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Main Table Card */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-2 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-1">
-          <TabButton active={activeTab === "rto"} href="/returns?tab=rto" icon={Truck} label="RTO Orders" />
-          <TabButton active={activeTab === "customer"} href="/returns?tab=customer" icon={RotateCcw} label="Customer Returns" />
-          <TabButton active={activeTab === "missing"} href="/returns?tab=missing" icon={AlertTriangle} label="Missing" />
-        </div>
-
-        <div className="p-5 space-y-5">
-          {/* Sub Tabs & Filter Info */}
-          {activeTab !== "missing" && (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex bg-slate-100 p-1 rounded-lg self-start">
-                {activeTab === "rto" ? (
-                  <>
-                    <button onClick={() => setRtoSubTab("pending")} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${rtoSubTab === "pending" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>Pending / Expected RTO</button>
-                    <button onClick={() => setRtoSubTab("received")} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${rtoSubTab === "received" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>Received RTO</button>
-                  </>
-                ) : (
-                  <>
-                    <button onClick={() => setCustomerSubTab("pending")} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${customerSubTab === "pending" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>Pending Returns</button>
-                    <button onClick={() => setCustomerSubTab("received")} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${customerSubTab === "received" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>Received Returns</button>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === "missing" && (
-             <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-100 rounded-xl">
-                <AlertTriangle className="text-red-500 mt-0.5 flex-shrink-0" size={18} />
-                <div>
-                  <h4 className="text-sm font-bold text-red-800">Attention Required</h4>
-                  <p className="text-sm text-red-600 mt-1">These orders have exceeded the expected return window (30+ days).</p>
+      {/* Data Table */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        
+        {/* --- DYNAMIC HEADER --- */}
+        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-50/50 min-h-[60px]">
+          
+          {selectedIds.length > 0 ? (
+            // SHOW WHEN ITEMS SELECTED
+            <div className="w-full flex items-center justify-between animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="flex items-center gap-3">
+                    <span className="bg-blue-600 text-white text-xs font-bold px-2 py-1 rounded-md">{selectedIds.length} Selected</span>
+                    <button onClick={() => setSelectedIds([])} className="text-xs text-slate-500 hover:text-slate-800 underline">Clear</button>
                 </div>
-             </div>
+                <button 
+                    onClick={handleBulkUpdate}
+                    disabled={isBulkUpdating}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    {isBulkUpdating ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                    Set as "{targetStatus}"
+                </button>
+            </div>
+          ) : (
+            // SHOW DEFAULT HEADER (Title + Search + Filter)
+            <div className="w-full flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div className="flex items-center gap-4 w-full sm:w-auto">
+                    <h3 className="font-bold text-slate-700 whitespace-nowrap">Recent Returns ({filteredData.length})</h3>
+                    
+                    {/* Search Bar */}
+                    <div className="relative w-full sm:w-64">
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input 
+                            type="text" 
+                            value={tableSearch}
+                            onChange={(e) => setTableSearch(e.target.value)}
+                            placeholder="Filter by AWB, Order ID..." 
+                            className="w-full pl-9 pr-8 py-1.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder:text-slate-400"
+                        />
+                        {tableSearch && (
+                            <button onClick={() => setTableSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                                <X size={14} />
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <span className="text-xs text-slate-500 font-medium mr-1">View:</span>
+                    {["All", "None", "Processed"].map((filter) => (
+                    <button key={filter} onClick={() => setStatusFilter(filter as any)} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${ statusFilter === filter ? "bg-white text-blue-600 shadow-sm ring-1 ring-slate-200" : "text-slate-500 hover:text-slate-700" }`}>{filter}</button>
+                    ))}
+                </div>
+            </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative flex-1 min-w-[240px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-              <input type="text" placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-            </div>
-            <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-red-600 transition-colors"><Trash2 size={15} /> <span>Delete selected</span></button>
-          </div>
         </div>
-
-        {/* Table */}
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-24 text-slate-400"><Loader2 className="animate-spin mb-3" size={32} /><p className="text-sm">Loading data...</p></div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="bg-slate-50 border-y border-slate-200 text-slate-500 font-medium">
-                <tr>
-                  <th className="p-4 w-10"><input type="checkbox" className="rounded border-slate-300" /></th>
-                  <th className="py-3 px-4 font-medium">Suborder No / AWB</th>
-                  <th className="py-3 px-4 font-medium">Order Date</th>
-                  <th className="py-3 px-4 font-medium">Product Details</th>
-                  <th className="py-3 px-4 font-medium">Type</th>
-                  <th className="py-3 px-4 font-medium">Status</th>
-                  {activeTab === 'missing' && <th className="py-3 px-4 font-medium">Days Pending</th>}
-                  <th className="py-3 px-4 font-medium text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {returns.length === 0 ? (
-                  <tr><td colSpan={8} className="py-16 text-center text-slate-400"><Package size={48} className="mb-3 opacity-20 mx-auto" /><p>No records found</p></td></tr>
-                ) : (
-                  returns.map((item) => {
-                    const dateObj = parseDate(item.orderDate);
-                    const daysPending = getDaysSinceOrder(item.orderDate);
-                    
-                    return (
-                      <tr key={item._id} className="hover:bg-slate-50 transition-colors group">
-                        <td className="p-4"><input type="checkbox" className="rounded border-slate-300" /></td>
-                        <td className="p-4">
-                          <div className="flex flex-col gap-1">
-                             <span className="font-medium text-slate-900">{item.subOrderNo}</span>
-                             {item.awbNumber ? <span className="text-xs font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 w-fit">{item.awbNumber}</span> : <span className="text-[10px] text-red-500 font-medium">Missing AWB</span>}
-                          </div>
-                        </td>
-                        
-                        {/* ✅ SAFE DATE RENDERING */}
-                        <td className="p-4 text-slate-600">
-                           <div className="flex flex-col">
-                             {dateObj ? (
-                               <>
-                                 <div className="flex items-center gap-1.5 font-medium text-slate-900">
-                                    <Calendar size={14} className="text-slate-400" />
-                                    {dateObj.toLocaleDateString("en-GB", { day: 'numeric', month: 'short', year: 'numeric' })}
-                                 </div>
-                                 <div className="text-xs text-slate-400 pl-5 mt-0.5">
-                                     {dateObj.toLocaleTimeString("en-US", { hour: '2-digit', minute: '2-digit', hour12: true })}
-                                 </div>
-                               </>
-                             ) : (
-                               <span className="text-xs text-slate-300 italic bg-slate-50 px-2 py-1 rounded">
-                                 Invalid / Missing Date
-                               </span>
-                             )}
-                           </div>
-                        </td>
-
-                        <td className="p-4">
-                          <div className="max-w-[200px]">
-                            <p className="text-slate-900 truncate font-medium">{item.supplierSku}</p>
-                            <p className="text-slate-500 text-xs truncate">{item.productName}</p>
-                          </div>
-                        </td>
-                        <td className="p-4">
-                           <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full ${item.returnType === 'RTO' ? 'bg-orange-50 text-orange-700' : 'bg-blue-50 text-blue-700'}`}>
-                              {item.returnType === "RTO" ? <Truck size={12} /> : <RotateCcw size={12} />} 
-                              {item.returnType === "RTO" ? "RTO" : "Return"}
-                           </span>
-                        </td>
-                        <td className="p-4">
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${getStatusBadge(item.receivedStatus)}`}>{item.receivedStatus}</span>
-                        </td>
-                        
-                        {activeTab === "missing" && (
-                          <td className="p-4">
-                             {dateObj ? (
-                               <span className={`font-bold ${daysPending > 60 ? 'text-red-600' : 'text-orange-600'}`}>{daysPending} days</span>
-                             ) : (
-                               <span className="text-slate-300 text-xs">-</span>
-                             )}
-                          </td>
-                        )}
-
-                        <td className="p-4 text-right">
-                          <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                             <button className="p-1.5 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded"><Eye size={16} /></button>
-                             <button className="p-1.5 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded"><Trash2 size={16} /></button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
+        
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-white text-slate-500 font-medium border-b border-slate-100">
+              <tr>
+                <th className="p-4 w-10"><input type="checkbox" className="rounded border-gray-300 w-4 h-4 cursor-pointer" onChange={handleSelectAll} checked={selectedIds.length === filteredData.length && filteredData.length > 0} /></th>
+                <th className="p-4">AWB & Order Details</th>
+                <th className="p-4">SKU / Product</th>
+                <th className="p-4">Current Status</th>
+                <th className="p-4">Last Updated</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {loading ? (
+                <tr><td colSpan={5} className="p-12 text-center text-slate-400">Loading returns data...</td></tr>
+              ) : filteredData.length === 0 ? (
+                <tr><td colSpan={5} className="p-12 text-center text-slate-400">No records found matching your filters.</td></tr>
+              ) : (
+                filteredData.map((item) => (
+                  <tr key={item._id} className={`group transition-colors ${getRowHighlightColor(item.verificationStatus)}`}>
+                    <td className="p-4"><input type="checkbox" className="rounded border-gray-300 w-4 h-4 cursor-pointer" checked={selectedIds.includes(item._id)} onChange={() => handleSelectOne(item._id)} /></td>
+                    <td className="p-4">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider w-8">AWB:</span>
+                            {item.awbNumber ? (
+                                <span className="font-mono text-slate-900 font-bold bg-slate-100 px-1.5 rounded">{item.awbNumber}</span>
+                            ) : (
+                                <span className="text-xs text-red-400 font-medium italic bg-red-50 px-1.5 rounded">Pending Map</span>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider w-8">ORD:</span>
+                            <span className="font-mono text-slate-600 text-xs">{item.subOrderNo}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                        <div className="flex flex-col">
+                            <span className="font-medium text-slate-800 max-w-[200px] truncate" title={item.supplierSku}>{item.supplierSku}</span>
+                            <span className="text-xs text-slate-400 mt-0.5 max-w-[200px] truncate">{item.productName}</span>
+                        </div>
+                    </td>
+                    <td className="p-4">
+                        <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold shadow-sm ${getStatusBadgeColor(item.verificationStatus)}`}>
+                            {item.verificationStatus}
+                        </span>
+                        <div className="mt-1.5 text-[10px] text-slate-400 pl-1">
+                            Live: {item.liveOrderStatus}
+                        </div>
+                    </td>
+                    <td className="p-4 text-slate-500 text-xs whitespace-nowrap">
+                        {new Date(item.updatedAt).toLocaleString("en-IN", {
+                            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                        })}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

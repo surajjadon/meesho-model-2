@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { SkuMapping } from '../models/skuMapping.model';
+import { SkuMappingHistory } from '../models/SkuMappingHistory.model'; // <--- Import the new History Model
 import { UnmappedSku } from '../models/unmappedSku.model';
 import LabelData from '../models/labelData.model'; 
 
@@ -47,6 +48,21 @@ export const getMappings = async (req: Request, res: Response) => {
     }
 }
 
+// --- NEW: GET /mappings/history/:id ---
+export const getMappingHistory = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        // Fetch history sorted by most recent edit first
+        const history = await SkuMappingHistory.find({ skuMappingId: id })
+            .sort({ updatedAt: -1 });
+        
+        res.status(200).json(history);
+    } catch (error: any) {
+        console.error("GET HISTORY ERROR:", error);
+        res.status(500).json({ message: 'Server Error fetching history', error: error.message });
+    }
+}
+
 // POST /mappings
 export const createMapping = async (req: Request, res: Response) => {
     const { gstin, sku, manufacturingPrice, packagingCost, mappedProducts } = req.body;
@@ -72,6 +88,16 @@ export const createMapping = async (req: Request, res: Response) => {
             packagingCost: cleanPackagingCost,
             mappedProducts 
         });
+       
+       await SkuMappingHistory.create({
+            skuMappingId: newMapping._id, // <--- This was missing in your original code
+            gstin, 
+            sku: sanitizedSku,
+            manufacturingPrice: cleanMfgPrice,
+            packagingCost: cleanPackagingCost,
+            updatedAt: new Date() 
+        });
+
         
         await UnmappedSku.updateMany(
             { gstin, sku: sanitizedSku, status: 'pending' }, 
@@ -89,41 +115,33 @@ export const createMapping = async (req: Request, res: Response) => {
     }
 }
 
-// ✅ FIXED: GET UNMAPPED SKUS (Strict GSTIN Filtering)
+// GET UNMAPPED SKUS (Strict GSTIN Filtering)
 export const getUnmappedSkus = async (req: Request, res: Response) => {
     const { gstin } = req.query;
     if (!gstin) return res.status(400).json({ message: 'GSTIN is required' });
 
     try {
-        // console.log(`🔍 Fetching unmapped SKUs strictly for GSTIN: "${gstin}"`);
-
-        // 1. Get distinct SKUs from LabelData ONLY for this specific GSTIN
         const usedSkus = await LabelData.distinct('sku', { 
-            businessGstin: { $eq: gstin as string } // Strict equality check
+            businessGstin: { $eq: gstin as string } 
         });
 
-        // 2. Get mapped SKUs ONLY for this specific GSTIN
         const mappedSkusDocs = await SkuMapping.find({ 
             gstin: { $eq: gstin as string } 
         }).select('sku');
         
         const mappedSkusSet = new Set(mappedSkusDocs.map(m => m.sku));
 
-        // 3. Filter (Find Used but Not Mapped)
         const unmapped = usedSkus.filter((sku: string) => 
             sku && sku.trim() !== '' && !mappedSkusSet.has(sku)
         );
         
-        // 4. Include legacy UnmappedSku collection (Strictly for this GSTIN)
         const legacyUnmapped = await UnmappedSku.find({ 
             gstin: { $eq: gstin as string }, 
             status: 'pending' 
         }).distinct('sku');
 
-        // Combine unique results
         const finalUnmapped = Array.from(new Set([...unmapped, ...legacyUnmapped])).sort();
 
-        // console.log(`✅ Found ${finalUnmapped.length} unmapped SKUs for ${gstin}`);
         res.json(finalUnmapped);
 
     } catch (error: any) {
@@ -132,7 +150,7 @@ export const getUnmappedSkus = async (req: Request, res: Response) => {
     }
 }
 
-// PUT /mappings/:id
+// PUT /mappings/:id (UPDATED with History Logic)
 export const updateMapping = async (req: Request, res: Response) => {
     const { id } = req.params;
     const { gstin, sku, manufacturingPrice, packagingCost, mappedProducts } = req.body;
@@ -144,9 +162,10 @@ export const updateMapping = async (req: Request, res: Response) => {
     const sanitizedSku = sku.trim();
 
     try {
+        // 1. Check for conflicts
         const conflictingMapping = await SkuMapping.findOne({ 
             gstin, 
-            sku: sanitizedSku,
+            sku: sanitizedSku, 
             _id: { $ne: id } 
         });
 
@@ -154,6 +173,23 @@ export const updateMapping = async (req: Request, res: Response) => {
             return res.status(409).json({ message: `SKU "${sanitizedSku}" is already in use by another mapping.` });
         }
 
+        // 2. Find the EXISTING mapping (The "Old" Data)
+        const oldMapping = await SkuMapping.findById(id);
+        if (!oldMapping) {
+            return res.status(404).json({ message: "Mapping not found." });
+        }
+
+        // 3. Save "Old" Data to History
+        await SkuMappingHistory.create({
+            skuMappingId: oldMapping._id,
+            gstin: oldMapping.gstin,
+            sku: oldMapping.sku,
+            manufacturingPrice: oldMapping.manufacturingPrice,
+            packagingCost: oldMapping.packagingCost,
+            updatedAt: new Date() // Sets the timestamp to right now
+        });
+
+        // 4. Perform the Update
         const updateData = {
             sku: sanitizedSku,
             manufacturingPrice: parseFloat(manufacturingPrice) || 0,
@@ -164,10 +200,6 @@ export const updateMapping = async (req: Request, res: Response) => {
         const updatedMapping = await SkuMapping.findByIdAndUpdate(id, updateData, { new: true })
             .populate('mappedProducts.inventoryItem', 'title stock');
 
-        if (!updatedMapping) {
-            return res.status(404).json({ message: "Mapping not found." });
-        }
-
         res.status(200).json(updatedMapping);
 
     } catch (error: any)  {
@@ -176,7 +208,7 @@ export const updateMapping = async (req: Request, res: Response) => {
     }
 };
 
-// DELETE /mappings/:id
+// DELETE /mappings/:id (UPDATED with History Deletion)
 export const deleteMapping = async (req: Request, res: Response) => {
     const { id } = req.params;
     const { gstin } = req.body;
@@ -192,17 +224,52 @@ export const deleteMapping = async (req: Request, res: Response) => {
             return res.status(404).json({ message: "Mapping not found or you do not have permission to delete it." });
         }
 
+        // 1. Delete History associated with this mapping
+        await SkuMappingHistory.deleteMany({ skuMappingId: id });
+
+        // 2. Delete the Main Mapping
         await SkuMapping.findByIdAndDelete(id);
 
+        // 3. Reset Unmapped status
         await UnmappedSku.updateMany(
             { gstin, sku: mappingToDelete.sku, status: 'mapped' },
             { $set: { status: 'pending' } }
         );
 
-        res.status(200).json({ message: "Mapping deleted successfully." });
+        res.status(200).json({ message: "Mapping and history deleted successfully." });
 
     } catch (error: any) {
         console.error("DELETE MAPPING ERROR:", error);
         res.status(500).json({ message: 'Server Error while deleting mapping.', error: error.message });
+    }
+};
+
+
+// PUT /mappings/history/:historyId
+export const updateHistoryRecord = async (req: Request, res: Response) => {
+    const { historyId } = req.params;
+    const { manufacturingPrice, packagingCost } = req.body;
+
+    try {
+        // 1. Find the history record
+        const historyRecord = await SkuMappingHistory.findById(historyId);
+
+        if (!historyRecord) {
+            return res.status(404).json({ message: "History record not found." });
+        }
+
+        // 2. Update ONLY the costs. We do NOT change the 'editedAt' date.
+        historyRecord.manufacturingPrice = parseFloat(manufacturingPrice) || 0;
+        historyRecord.packagingCost = parseFloat(packagingCost) || 0;
+        
+        // Optional: If you want to track WHEN this fix happened, you could add a 'fixedAt' field, 
+        // but to keep it "on that date only" as requested, we just save.
+        await historyRecord.save();
+
+        res.status(200).json(historyRecord);
+
+    } catch (error: any) {
+        console.error("UPDATE HISTORY ERROR:", error);
+        res.status(500).json({ message: 'Failed to update history record', error: error.message });
     }
 };

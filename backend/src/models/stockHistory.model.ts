@@ -14,6 +14,7 @@ export interface IStockHistory extends Document {
 const StockHistorySchema = new Schema<IStockHistory>({
   gstin: { type: String, required: true, index: true },
   inventoryItem: { type: Schema.Types.ObjectId, ref: 'InventoryItem', required: true, index: true },
+  // sku:{type:String},
   change: { type: Number, required: true },
   previousStock: { type: Number, required: true },
   newStock: { type: Number, required: true },

@@ -153,8 +153,8 @@ const formatCurrency = (val: number) =>
     new Intl.NumberFormat('en-IN', { 
         style: 'currency', 
         currency: 'INR', 
-        minimumFractionDigits: 2, // Enforce 2 decimals
-        maximumFractionDigits: 2  // Limit to 2 decimals
+        minimumFractionDigits: 2, 
+        maximumFractionDigits: 2 
     }).format(val);
 
     const toggleRow = (sku: string) => setExpandedSku(expandedSku === sku ? null : sku);

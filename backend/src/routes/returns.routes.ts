@@ -5,7 +5,7 @@ import { getReturns, getReturnsSummary, verifyReturns, deleteReturns, migrateRet
 const router = express.Router();
 
 // GET /api/returns -> Fetches all returns for a business (with optional filters)
-router.get('/', protect, getReturns);
+router.get('/', getReturns);
 
 // GET /api/returns/summary -> Get counts for dashboard
 router.get('/summary', protect, getReturnsSummary);

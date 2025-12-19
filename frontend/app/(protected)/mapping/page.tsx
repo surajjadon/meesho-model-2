@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, FormEvent } from "react";
 import { useBusiness, api } from "../../../providers/GlobalProvider";
-import { FaLink } from "react-icons/fa";
+import { FaLink, FaHistory, FaTimes, FaSave } from "react-icons/fa"; // Added FaSave
 import {
   Package,
   Settings,
@@ -11,6 +11,8 @@ import {
   XCircle,
   Trash2,
   Edit,
+  History,
+  X, // Added X for cancel icon
 } from "lucide-react";
 
 // Interfaces for data shapes
@@ -29,6 +31,14 @@ interface SkuMapping {
   manufacturingPrice: number;
   packagingCost: number;
   mappedProducts: MappedProduct[];
+}
+
+// Interface for History
+interface HistoryRecord {
+  _id: string;
+  manufacturingPrice: number;
+  packagingCost: number;
+updatedAt: string;
 }
 
 export default function MappingPage() {
@@ -54,8 +64,17 @@ export default function MappingPage() {
   >("idle");
   const [skuCheckMessage, setSkuCheckMessage] = useState("");
 
-  // NEW STATE to track which mapping is being edited
   const [editingMappingId, setEditingMappingId] = useState<string | null>(null);
+
+  // --- HISTORY MODAL STATE ---
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyData, setHistoryData] = useState<HistoryRecord[]>([]);
+  const [selectedHistorySku, setSelectedHistorySku] = useState("");
+
+  // --- NEW: HISTORY EDITING STATE ---
+  const [editingHistoryId, setEditingHistoryId] = useState<string | null>(null);
+  const [editHistoryForm, setEditHistoryForm] = useState({ mfg: "", pkg: "" });
 
   // Main data fetching function
   const fetchPageData = async () => {
@@ -89,7 +108,6 @@ export default function MappingPage() {
     fetchPageData();
   }, [selectedBusiness]);
 
-  // useEffect to auto-calculate manufacturing price
   useEffect(() => {
     if (selectedProducts.length === 0) {
       setMfgPrice("0.00");
@@ -105,13 +123,11 @@ export default function MappingPage() {
     setMfgPrice(totalCost.toFixed(2));
   }, [selectedProducts, inventory]);
 
-  // useEffect to reset SKU check status when user types in the SKU input
   useEffect(() => {
     setSkuCheckStatus("idle");
     setSkuCheckMessage("");
   }, [sku]);
 
-  // Handler for checking SKU availability
   const handleSkuCheck = async () => {
     if (!sku || !selectedBusiness) return;
     setSkuCheckStatus("checking");
@@ -121,10 +137,9 @@ export default function MappingPage() {
         params: { gstin: selectedBusiness.gstin },
       });
       if (data.isTaken) {
-        // If we are editing, it's okay if the SKU is taken by the item we are currently editing
         const currentMapping = mappings.find((m) => m._id === editingMappingId);
         if (currentMapping && currentMapping.sku === sku.trim()) {
-          setSkuCheckStatus("idle"); // It's our own SKU, so it's not an error.
+          setSkuCheckStatus("idle");
           setSkuCheckMessage("");
         } else {
           setSkuCheckStatus("taken");
@@ -140,7 +155,6 @@ export default function MappingPage() {
     }
   };
 
-  // Function to reset the form and exit editing mode
   const resetForm = () => {
     setSku("");
     setMfgPrice("");
@@ -152,21 +166,80 @@ export default function MappingPage() {
     setError("");
   };
 
-  // Handler to start editing a mapping
   const handleEditClick = (mapping: SkuMapping) => {
     setEditingMappingId(mapping._id);
     setSku(mapping.sku);
     setPackagingCost(String(mapping.packagingCost));
     setSelectedProducts(
-      mapping.mappedProducts.map((p) => ({
-        id: p.inventoryItem._id,
-        quantity: p.quantity,
-      }))
+      mapping.mappedProducts
+        .map((p) => ({
+          id: p.inventoryItem?._id,
+          quantity: p.quantity,
+        }))
+        .filter((p) => p.id)
     );
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // This function now handles both Create and Update
+  // --- FETCH HISTORY HANDLER ---
+  const handleHistoryClick = async (mapping: SkuMapping) => {
+    setSelectedHistorySku(mapping.sku);
+    setShowHistoryModal(true);
+    setHistoryLoading(true);
+    setHistoryData([]);
+    setEditingHistoryId(null); // Reset edit mode when opening
+
+    try {
+      const { data } = await api.get(`/mappings/history/${mapping._id}`);
+      setHistoryData(data);
+    } catch (err) {
+      console.error("Failed to fetch history", err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  // --- NEW: START EDITING HISTORY ROW ---
+  const startEditingHistory = (record: HistoryRecord) => {
+    setEditingHistoryId(record._id);
+    setEditHistoryForm({
+      mfg: record.manufacturingPrice.toString(),
+      pkg: record.packagingCost.toString(),
+    });
+  };
+
+  // --- NEW: CANCEL EDITING HISTORY ---
+  const cancelHistoryEdit = () => {
+    setEditingHistoryId(null);
+    setEditHistoryForm({ mfg: "", pkg: "" });
+  };
+
+  // --- NEW: SAVE HISTORY EDIT ---
+  const saveHistoryEdit = async (historyId: string) => {
+    try {
+      await api.put(`/mappings/history/${historyId}`, {
+        manufacturingPrice: editHistoryForm.mfg,
+        packagingCost: editHistoryForm.pkg,
+      });
+
+      // Update local state immediately to reflect changes
+      setHistoryData((prev) =>
+        prev.map((item) =>
+          item._id === historyId
+            ? {
+                ...item,
+                manufacturingPrice: parseFloat(editHistoryForm.mfg),
+                packagingCost: parseFloat(editHistoryForm.pkg),
+              }
+            : item
+        )
+      );
+      setEditingHistoryId(null);
+    } catch (error) {
+      alert("Failed to update history record.");
+    }
+  };
+
   const handleSubmitMapping = async (e: FormEvent) => {
     e.preventDefault();
     if (!selectedBusiness || !sku || selectedProducts.length === 0) {
@@ -188,7 +261,6 @@ export default function MappingPage() {
 
     try {
       if (editingMappingId) {
-        // UPDATE LOGIC
         const { data } = await api.put(
           `/mappings/${editingMappingId}`,
           mappingData
@@ -197,7 +269,6 @@ export default function MappingPage() {
           prev.map((m) => (m._id === editingMappingId ? data : m))
         );
       } else {
-        // CREATE LOGIC
         if (skuCheckStatus === "taken") {
           setError("This SKU is already in use. Please choose another one.");
           return;
@@ -219,7 +290,6 @@ export default function MappingPage() {
     }
   };
 
-  // Handler for deleting an existing mapping
   const handleDeleteMapping = async (
     mappingId: string,
     skuToDelete: string
@@ -230,7 +300,7 @@ export default function MappingPage() {
     }
     if (
       window.confirm(
-        `Are you sure you want to delete the mapping for SKU "${skuToDelete}"? This SKU will become unmapped again.`
+        `Are you sure? This will delete the mapping and ALL price history for "${skuToDelete}".`
       )
     ) {
       try {
@@ -246,7 +316,6 @@ export default function MappingPage() {
     }
   };
 
-  // Helper handlers for form inputs
   const handleProductSelection = (productId: string) => {
     setSelectedProducts((prev) =>
       prev.some((p) => p.id === productId)
@@ -277,12 +346,13 @@ export default function MappingPage() {
     );
 
   return (
-    <div className="h-screen overflow-y-auto overflow-x-hidden bg-gradient-to-br from-slate-50 to-slate-100">
+    <div className="h-screen overflow-y-auto overflow-x-hidden bg-gradient-to-br from-slate-50 to-slate-100 relative">
       <div className="w-full px-4 py-6 sm:px-6 lg:px-8">
         <h1 className="text-2xl sm:text-3xl font-bold text-slate-800 mb-6">
           SKU Mapping
         </h1>
 
+        {/* --- Header Processing Section --- */}
         {selectedBusiness && (
           <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6 rounded-lg">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -324,6 +394,7 @@ export default function MappingPage() {
           </div>
         )}
 
+        {/* --- Tabs --- */}
         <div className="border-b border-slate-200 mb-6">
           <nav className="flex space-x-4">
             <button
@@ -371,6 +442,7 @@ export default function MappingPage() {
 
         {activeTab === "mapping" && (
           <>
+            {/* --- Form --- */}
             <form
               onSubmit={handleSubmitMapping}
               className="bg-white p-6 rounded-xl shadow-lg border border-slate-200 space-y-6"
@@ -384,7 +456,7 @@ export default function MappingPage() {
                   </h2>
                   <p className="text-slate-500 text-sm">
                     {editingMappingId
-                      ? `You are editing an existing SKU.`
+                      ? `Updating will archive current prices to history.`
                       : "Link a sales SKU to your inventory items."}
                   </p>
                 </div>
@@ -401,15 +473,11 @@ export default function MappingPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="space-y-4">
                   <div>
-                    <label
-                      htmlFor="sku"
-                      className="text-sm font-medium text-slate-700"
-                    >
+                    <label className="text-sm font-medium text-slate-700">
                       Enter Sales SKU
                     </label>
                     <div className="flex items-center gap-2 mt-1">
                       <input
-                        id="sku"
                         type="text"
                         value={sku}
                         onChange={(e) => setSku(e.target.value)}
@@ -448,14 +516,10 @@ export default function MappingPage() {
                     )}
                   </div>
                   <div>
-                    <label
-                      htmlFor="mfgPrice"
-                      className="text-sm font-medium text-slate-700"
-                    >
+                    <label className="text-sm font-medium text-slate-700">
                       Manufacturing Price (₹)
                     </label>
                     <input
-                      id="mfgPrice"
                       type="number"
                       value={mfgPrice}
                       readOnly
@@ -463,19 +527,14 @@ export default function MappingPage() {
                       className="w-full p-2 border rounded-md text-slate-900 placeholder:text-slate-400 bg-slate-100 cursor-not-allowed mt-1"
                     />
                     <p className="text-xs text-slate-500 mt-1">
-                      This value is automatically calculated from selected
-                      inventory items.
+                      Auto-calculated from selected inventory items.
                     </p>
                   </div>
                   <div>
-                    <label
-                      htmlFor="packagingCost"
-                      className="text-sm font-medium text-slate-700"
-                    >
+                    <label className="text-sm font-medium text-slate-700">
                       Packaging Cost (₹)
                     </label>
                     <input
-                      id="packagingCost"
                       type="number"
                       value={packagingCost}
                       onChange={(e) => setPackagingCost(e.target.value)}
@@ -510,8 +569,7 @@ export default function MappingPage() {
                       ))
                     ) : (
                       <p className="text-sm text-slate-500 p-4 text-center">
-                        No inventory items found. Please add items on the
-                        Inventory page.
+                        No inventory items found.
                       </p>
                     )}
                   </div>
@@ -520,7 +578,7 @@ export default function MappingPage() {
               {selectedProducts.length > 0 && (
                 <div className="pt-4 border-t">
                   <h3 className="font-semibold mb-2 text-slate-800">
-                    Set Quantities for Selected Products
+                    Set Quantities
                   </h3>
                   <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
                     {selectedProducts.map((p) => (
@@ -560,6 +618,7 @@ export default function MappingPage() {
               </div>
             </form>
 
+            {/* --- Table Section --- */}
             <div className="mt-12">
               <h2 className="text-xl font-bold text-slate-800 mb-4">
                 Existing SKU Mappings ({mappings.length})
@@ -629,6 +688,15 @@ export default function MappingPage() {
                           </td>
                           <td className="p-3 align-top text-center">
                             <div className="flex justify-center items-center gap-1">
+                              {/* --- HISTORY BUTTON --- */}
+                              <button
+                                onClick={() => handleHistoryClick(mapping)}
+                                className="p-2 text-slate-400 hover:bg-purple-100 hover:text-purple-600 rounded-full"
+                                title="View Price History"
+                              >
+                                <History size={16} />
+                              </button>
+
                               <button
                                 onClick={() => handleEditClick(mapping)}
                                 className="p-2 text-slate-400 hover:bg-blue-100 hover:text-blue-600 rounded-full"
@@ -655,7 +723,7 @@ export default function MappingPage() {
                           colSpan={4}
                           className="text-center p-8 text-slate-500"
                         >
-                          No SKU mappings have been created yet.
+                          No SKU mappings yet.
                         </td>
                       </tr>
                     )}
@@ -666,6 +734,7 @@ export default function MappingPage() {
           </>
         )}
 
+        {/* --- Must Mapped Section --- */}
         {activeTab === "mustMapped" && (
           <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-slate-200">
             <div className="p-6">
@@ -709,7 +778,7 @@ export default function MappingPage() {
                         colSpan={2}
                         className="text-center py-8 text-slate-500"
                       >
-                        No unmapped SKUs found. Great job!
+                        No unmapped SKUs found.
                       </td>
                     </tr>
                   )}
@@ -724,6 +793,164 @@ export default function MappingPage() {
           </div>
         )}
       </div>
+
+      {/* --- HISTORY POPUP MODAL (UPDATED) --- */}
+      {showHistoryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-5 border-b flex justify-between items-center bg-slate-50">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">
+                  Price History
+                </h3>
+                <p className="text-sm text-slate-500 font-mono">
+                  SKU: {selectedHistorySku}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <FaTimes size={20} />
+              </button>
+            </div>
+            <div className="p-6 max-h-[60vh] overflow-y-auto">
+              {historyLoading ? (
+                <div className="text-center py-8 text-slate-500">
+                  Loading history...
+                </div>
+              ) : historyData.length > 0 ? (
+                <div className="relative border-l-2 border-slate-200 ml-3 space-y-6">
+                  {historyData.map((record, index) => (
+                    <div key={index} className="relative pl-6">
+                      <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-slate-200 border-2 border-white"></div>
+                      <div className="flex justify-between items-end mb-1">
+                        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                          {new Date(record.updatedAt).toLocaleString()}
+                        </div>
+                        {editingHistoryId !== record._id && (
+                          <button
+                            onClick={() => startEditingHistory(record)}
+                            className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                          >
+                            <Edit size={12} /> Edit
+                          </button>
+                        )}
+                      </div>
+
+                      <div
+                        className={`p-3 rounded-lg border flex flex-col sm:flex-row gap-4 sm:gap-6 ${
+                          editingHistoryId === record._id
+                            ? "bg-blue-50 border-blue-200"
+                            : "bg-slate-50 border-slate-100"
+                        }`}
+                      >
+                        {editingHistoryId === record._id ? (
+                          // --- EDIT MODE ---
+                          <>
+                            <div className="flex-1">
+                              <label className="block text-xs text-slate-500 mb-1">
+                                Mfg Price
+                              </label>
+                              <input
+                                type="number"
+                                value={editHistoryForm.mfg}
+                                onChange={(e) =>
+                                  setEditHistoryForm({
+                                    ...editHistoryForm,
+                                    mfg: e.target.value,
+                                  })
+                                }
+                                className="w-full p-1 text-sm border rounded"
+                              />
+                            </div>
+                            <div className="flex-1">
+                              <label className="block text-xs text-slate-500 mb-1">
+                                Pkg Cost
+                              </label>
+                              <input
+                                type="number"
+                                value={editHistoryForm.pkg}
+                                onChange={(e) =>
+                                  setEditHistoryForm({
+                                    ...editHistoryForm,
+                                    pkg: e.target.value,
+                                  })
+                                }
+                                className="w-full p-1 text-sm border rounded"
+                              />
+                            </div>
+                            <div className="flex items-end gap-2">
+                              <button
+                                onClick={() => saveHistoryEdit(record._id)}
+                                className="p-2 bg-green-600 text-white rounded hover:bg-green-700"
+                                title="Save"
+                              >
+                                <FaSave size={14} />
+                              </button>
+                              <button
+                                onClick={cancelHistoryEdit}
+                                className="p-2 bg-slate-200 text-slate-600 rounded hover:bg-slate-300"
+                                title="Cancel"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          // --- VIEW MODE ---
+                          <>
+                            <div>
+                              <span className="block text-xs text-slate-400">
+                                Mfg Price
+                              </span>
+                              <span className="font-mono font-medium text-slate-700">
+                                ₹{record.manufacturingPrice.toFixed(2)}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="block text-xs text-slate-400">
+                                Pkg Cost
+                              </span>
+                              <span className="font-mono font-medium text-slate-700">
+                                ₹{record.packagingCost.toFixed(2)}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="block text-xs text-slate-400">
+                                Total
+                              </span>
+                              <span className="font-mono font-bold text-indigo-600">
+                                ₹
+                                {(
+                                  record.manufacturingPrice +
+                                  record.packagingCost
+                                ).toFixed(2)}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-slate-500">
+                  No history found. This SKU has not been updated yet.
+                </div>
+              )}
+            </div>
+            <div className="p-4 bg-slate-50 border-t text-right">
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                className="px-4 py-2 bg-white border border-slate-300 rounded-lg text-slate-700 font-medium hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

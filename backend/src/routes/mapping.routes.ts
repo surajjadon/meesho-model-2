@@ -5,7 +5,9 @@ import {
     getUnmappedSkus,
     checkSku,
     updateMapping, // 1. Import the new update function
-    deleteMapping
+    deleteMapping,
+    getMappingHistory,
+    updateHistoryRecord
 } from '../controllers/mapping.controller';
 import { protect } from '../middleware/auth.middleware';
 
@@ -24,6 +26,10 @@ router.get('/unmapped', getUnmappedSkus);
 router.route('/')
     .get(getMappings)
     .post(createMapping);
+
+    router.get('/history/:id', getMappingHistory);
+    router.put('/history/:historyId', updateHistoryRecord);
+    
 
 // --- 2. ADD THE PUT METHOD TO THIS ROUTE ---
 // This route now handles updating and deleting a specific mapping by its ID
