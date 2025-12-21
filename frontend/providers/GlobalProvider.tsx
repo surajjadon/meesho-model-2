@@ -8,7 +8,7 @@ import axios from 'axios';
 // 1. AUTHENTICATION CONTEXT
 // ====================================================================
 
-const API_URL = 'http://localhost:24554';
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 interface User {
   _id: string;
