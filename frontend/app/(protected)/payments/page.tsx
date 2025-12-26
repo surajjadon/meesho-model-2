@@ -3,12 +3,14 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import PaymentsDashboard from './PaymentsDashboard';
 import ProfitLossDashboard from './ProfitLossDashboard';
-
+import ProtectRoute from "@/components/ProtectRoute";
 export default function PaymentsPageLayout() {
     const searchParams = useSearchParams();
     const activeTab = searchParams.get('tab') || 'payments';
 
     return (
+        
+            <ProtectRoute permission="payments">
         <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-6">
@@ -46,5 +48,6 @@ export default function PaymentsPageLayout() {
             {activeTab === 'payments' && <PaymentsDashboard />}
             {activeTab === 'pl' && <ProfitLossDashboard />}
         </div>
+        </ProtectRoute>
     );
 }

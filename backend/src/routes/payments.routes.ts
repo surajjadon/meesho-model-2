@@ -6,7 +6,8 @@ import {
     getPaymentHistory,
     getAggregatePaymentStats,
     getAllTimePaymentTrend,
-    getPaymentDetails 
+    getPaymentDetails ,
+     getPaymentDetailsPaginated
 } from '../controllers/payments.controller';
 
 const router = express.Router();
@@ -42,5 +43,6 @@ router.get(
     protect, 
     getAllTimePaymentTrend
 );
+router.get('/history/:id/paginated',protect, getPaymentDetailsPaginated);
 
 export default router;

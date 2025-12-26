@@ -3,6 +3,7 @@ import { SkuMapping } from '../models/skuMapping.model';
 import { SkuMappingHistory } from '../models/SkuMappingHistory.model';
 import PaymentHistory from '../models/PaymentHistory.model';
 import ReturnOrder from '../models/returnOrder.model';
+import { logAction } from '../utils/logger'; // ✅ Imported Logger
 
 // --- Helper: Clean Numbers ---
 const cleanNumber = (v: any): number => {
@@ -25,8 +26,6 @@ const parseOrderDate = (dateStr: any): Date | null => {
     }
     return null;
 };
-
-// ... imports and helpers ...
 
 export const getInventoryMatchedOrders = async (req: Request, res: Response) => {
     try {
@@ -68,60 +67,43 @@ export const getInventoryMatchedOrders = async (req: Request, res: Response) => 
 
         // --- Helper: Binary Search ---
         function findPriceAtDate(records: ProductRecord[], targetDate: Date) {
-            // Edge case: No records
             if (records.length === 0) return { cp: 0, pkg: 0 };
 
-            // Find first record where date >= targetDate
             let l = 0, r = records.length;
             while (l < r) {
                 const mid = (l + r) >> 1;
                 if (records[mid].orderDate < targetDate) l = mid + 1;
                 else r = mid;
             }
-
-            // 'l' is the index of the first record AFTER or ON the order date.
-            // We want the record that was active AT the time of order.
             
             if (l === 0) {
-                // The order is OLDER than our first history record.
-                // Fallback: Use the oldest known price (the first one).
                 return records[0]; 
             } else {
-                // The order happened after record[l-1] but before record[l].
-                // Use record[l-1] as that was the active price.
                 return records[l - 1];
             }
         }
-9
-        // ... (ReturnOrders fetch remains the same) ...
-      // ... inside getInventoryMatchedOrders ...
 
-const returnOrders = await ReturnOrder.find({ businessGstin: gstin as string })
-    .select('subOrderNo verificationStatus notes')
-    .lean();
+        const returnOrders = await ReturnOrder.find({ businessGstin: gstin as string })
+            .select('subOrderNo verificationStatus notes')
+            .lean();
 
-const damageMap = new Map<string, boolean>();
+        const damageMap = new Map<string, boolean>();
 
-returnOrders.forEach((r: any) => {
-     const subOrderId = String(r.subOrderNo || '').trim();
-     
-     // 1. Normalize status to lowercase to make matching safer
-     const status = String(r.verificationStatus || '').toLowerCase();
-     const notes = String(r.notes || '').toLowerCase();
+        returnOrders.forEach((r: any) => {
+             const subOrderId = String(r.subOrderNo || '').trim();
+             const status = String(r.verificationStatus || '').toLowerCase();
+             const notes = String(r.notes || '').toLowerCase();
 
-     // 2. UPDATED LOGIC
-     const isDamaged = 
-        status.includes('damaged') ||   // Catches "Damaged", "Return and Damaged", "RTO and Damaged"
-        status === 'undelivered' ||     // Keeps your specific rule for Undelivered
-        notes.includes('damaged');      
+             const isDamaged = 
+                status.includes('damaged') ||   
+                status === 'undelivered' ||     
+                notes.includes('damaged');      
 
-     damageMap.set(subOrderId, isDamaged);
-});
+             damageMap.set(subOrderId, isDamaged);
+        });
 
-        // ... (Payment History fetch remains the same) ...
         const histories = await PaymentHistory.find({ businessGstin: gstin as string }).lean();
         
-        // ... (Stats vars remain the same) ...
         let matchedOrders: any[] = [];
         let unmatchedCount = 0;
         let totalNetOrderAmount = 0;
@@ -142,19 +124,14 @@ returnOrders.forEach((r: any) => {
                 const orderDateStr = String((order as any)['Order Date'] || '').trim();
                 const orderDate = parseOrderDate(orderDateStr) || new Date();
 
-                // --- FIX: Check Map directly instead of a separate Set ---
                 if (productMap.has(sheetSkuNormalized)) {
                     const records = productMap.get(sheetSkuNormalized)!;
-                    console.log(records);
-                    
-                    // Use the helper to find specific price at that time
                     const { cp, pkg } = findPriceAtDate(records, orderDate);
 
                     const status = String((order as any)['Live Order Status'] || '').toLowerCase();
                     const quantity = Number((order as any)['Quantity'] || 1);
                     const isDamaged = damageMap.get(subOrderNo) || false;
 
-                    // COGS Calculation
                     const standardCOGS = cp * quantity;
                     totalCOGS += standardCOGS;
 
@@ -162,8 +139,6 @@ returnOrders.forEach((r: any) => {
                     if (status.includes('delivered') || status.includes('shipped')) {
                         actualDeduction = cp * quantity;
                     } else if (status.includes('return') || status.includes('rto')) {
-                        // If damaged: lose Product + Packaging
-                        // If good: lose only Packaging
                         actualDeduction = isDamaged ? (pkg + cp) * quantity : pkg * quantity;
                     }
 
@@ -191,6 +166,18 @@ returnOrders.forEach((r: any) => {
         }
 
         const profitMargin = totalRevenue !== 0 ? (totalProfit / totalRevenue) * 100 : 0;
+
+        // ✅ AUDIT LOG: P&L Report Generated
+        if ((req as any).user) {
+            await logAction(
+                (req as any).user._id,
+                (req as any).user.name,
+                "PROCESS", 
+                "ProfiteLoss", 
+                `Generated P&L Report for GSTIN: ${gstin}. Revenue: ${totalRevenue.toFixed(2)}, Profit: ${totalProfit.toFixed(2)}`,
+                gstin as string // 👈 ADDED 6th ARGUMENT (GSTIN)
+            );
+        }
 
         res.status(200).json({
             stats: {

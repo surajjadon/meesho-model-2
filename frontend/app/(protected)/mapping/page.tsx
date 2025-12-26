@@ -14,7 +14,7 @@ import {
   History,
   X, // Added X for cancel icon
 } from "lucide-react";
-
+import ProtectRoute from "@/components/ProtectRoute";
 // Interfaces for data shapes
 interface InventoryItem {
   _id: string;
@@ -346,6 +346,7 @@ export default function MappingPage() {
     );
 
   return (
+    <ProtectRoute permission="mapping">
     <div className="h-screen overflow-y-auto overflow-x-hidden bg-gradient-to-br from-slate-50 to-slate-100 relative">
       <div className="w-full px-4 py-6 sm:px-6 lg:px-8">
         <h1 className="text-2xl sm:text-3xl font-bold text-slate-800 mb-6">
@@ -952,5 +953,6 @@ export default function MappingPage() {
         </div>
       )}
     </div>
+    </ProtectRoute>
   );
 }

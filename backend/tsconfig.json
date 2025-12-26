@@ -13,6 +13,6 @@
     "moduleResolution": "node",
     "types": ["node", "express", "multer", "jsonwebtoken", "mongoose", "bcryptjs"]
   },
-  "include": ["src/**/*", "src/types/**/*"],
+  "include": ["src/**/*", "src/types/**/*", "testEmail.ts"],
   "exclude": ["node_modules", "dist"]
 }

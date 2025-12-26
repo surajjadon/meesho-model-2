@@ -5,6 +5,7 @@ import { SkuMapping } from "../models/skuMapping.model";
 import { UnmappedSku } from "../models/unmappedSku.model";
 import mongoose from "mongoose";
 import { StockHistory } from "../models/stockHistory.model";
+import { logAction } from "../utils/logger"; // ✅ Imported Logger
 
 // Updated interface to match new OrderData model
 interface ParsedOrder {
@@ -115,6 +116,18 @@ export const processOrders = async (req: Request, res: Response) => {
     
     await session.commitTransaction();
     console.log('✅ Order Processing Complete. Saved:', results.saved);
+
+    // ✅ AUDIT LOG: Orders Imported (Passed GSTIN)
+    if ((req as any).user) {
+        await logAction(
+            (req as any).user._id,
+            (req as any).user.name,
+            "PROCESS",
+            "Orders",
+            `Imported ${orders.length} raw orders. Saved: ${results.saved}, Skipped: ${results.skipped}, Errors: ${results.errors.length}`,
+            gstin // 👈 6th Argument
+        );
+    }
     
     res.status(200).json({
       success: true,
@@ -131,8 +144,7 @@ export const processOrders = async (req: Request, res: Response) => {
   }
 };
 
-// --- 2. PROCESS INVENTORY UPDATES (FIXED LOGIC) ---
-// --- 2. PROCESS INVENTORY UPDATES (FIXED TYPES) ---
+// --- 2. PROCESS INVENTORY UPDATES ---
 export const processInventoryUpdates = async (req: Request, res: Response) => {
   const { gstin } = req.body;
   
@@ -189,7 +201,6 @@ export const processInventoryUpdates = async (req: Request, res: Response) => {
             }).session(session);
 
             if (directItem) {
-                // ✅ TYPE FIX: Explicitly cast _id to string
                 const directId = (directItem._id as mongoose.Types.ObjectId).toString();
                 console.log(`   🎯 Direct Match: "${sanitizedSku}" -> Inventory ID: ${directId}`);
                 
@@ -268,6 +279,18 @@ export const processInventoryUpdates = async (req: Request, res: Response) => {
     await session.commitTransaction();
     console.log(`✅ Inventory processing complete. Processed: ${processedCount}, Skipped: ${skippedCount}\n`);
     
+    // ✅ AUDIT LOG: Inventory Synced (Passed GSTIN)
+    if ((req as any).user) {
+        await logAction(
+            (req as any).user._id,
+            (req as any).user.name,
+            "UPDATE",
+            "Inventory",
+            `Synced stock for ${processedCount} new orders. Total items updated: ${inventoryUpdates.size}`,
+            gstin // 👈 6th Argument
+        );
+    }
+
     res.json({
       success: true,
       message: "Inventory updated successfully",
@@ -288,7 +311,6 @@ export const processInventoryUpdates = async (req: Request, res: Response) => {
 };
 
 // --- 3. GET ORDERS (For Dashboard) ---
-// --- 3. GET ORDERS (For Dashboard) - FIXED ---
 export const getOrders = async (req: Request, res: Response) => {
   const { gstin, fromDate, toDate } = req.query;
   

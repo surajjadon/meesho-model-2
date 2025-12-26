@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useBusiness, api } from "@/providers/GlobalProvider";
 import { ScanBarcode, Loader2, ChevronDown, ArrowLeft, RefreshCw, CheckCircle2, Search, X } from "lucide-react";
 
+import ProtectRoute from "@/components/ProtectRoute";
 // --- Interfaces ---
 interface IReturnOrder {
   _id: string;
@@ -14,7 +15,7 @@ interface IReturnOrder {
   productName: string;
   supplierSku: string;
   liveOrderStatus: string;
-  verificationStatus: "None" | "Delivered" | "Cancelled" | "Return" | "RTO" | "Undelivered" | "RTO and Damaged" | "Return and Damaged";
+  verificationStatus: "None" | "Delivered" | "Cancelled" | "Return" | "RTO" | "Undelivered" | "Damaged";
   updatedAt: string;
   createdAt?: string;
 }
@@ -27,8 +28,8 @@ const getStatusBadgeColor = (status: string) => {
         case 'RTO': return 'bg-orange-100 text-orange-800 border border-orange-200';
         case 'Cancelled': return 'bg-red-100 text-red-800 border border-red-200';
         case 'Undelivered': return 'bg-gray-100 text-gray-800 border border-gray-200';
-        case 'RTO and Damaged': return 'bg-red-50 text-red-600 border border-red-200';
-        case 'Return and Damaged': return 'bg-red-50 text-red-600 border border-red-200';
+        case 'Damaged': return 'bg-red-50 text-red-600 border border-red-200';
+        case 'Damaged': return 'bg-red-50 text-red-600 border border-red-200';
         default: return 'bg-slate-100 text-slate-600 border border-slate-200';
     }
 };
@@ -51,7 +52,7 @@ export default function ScannerPage() {
   
   // Scanner Inputs
   const [scanInput, setScanInput] = useState("");
-  const [targetStatus, setTargetStatus] = useState<"None" | "Delivered" | "Cancelled" | "Return" | "RTO" | "Undelivered" | "RTO and Damaged" | "Return and Damaged">("Return");
+  const [targetStatus, setTargetStatus] = useState<"None" | "Delivered" | "Cancelled" | "Return" | "RTO" | "Undelivered" | "Damaged" | "Damaged">("Return");
   const [isVerifying, setIsVerifying] = useState(false);
   const scanInputRef = useRef<HTMLInputElement>(null);
 
@@ -193,8 +194,8 @@ export default function ScannerPage() {
   const handleSelectOne = (id: string) => {
     setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   };
-
   return (
+    <ProtectRoute permission="returns">
     <div className="space-y-6 w-full min-h-screen bg-slate-50 p-4 md:p-6">
       
       {/* Header */}
@@ -254,9 +255,9 @@ export default function ScannerPage() {
                 className="w-full appearance-none bg-white border border-slate-200 text-slate-700 py-4 pl-4 pr-10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium shadow-sm cursor-pointer"
               >
                 <option value="Return">Return (Customer)</option>
-                <option value="Return and Damaged">Return and Damaged</option>
+                <option value="Damaged">Damaged</option>
                 <option value="RTO">RTO (Courier)</option>
-                <option value="RTO and Damaged">RTO and Damaged</option>
+                <option value="Damaged">Damaged</option>
                 <option value="Delivered">Delivered</option>
                 <option value="Cancelled">Cancelled</option>
                 <option value="Undelivered">Undelivered</option>
@@ -387,5 +388,6 @@ export default function ScannerPage() {
         </div>
       </div>
     </div>
+    </ProtectRoute>
   );
 }

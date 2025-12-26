@@ -4,7 +4,7 @@ import PaymentHistory from '../models/PaymentHistory.model';
 import ReturnOrder from '../models/returnOrder.model';
 import LabelData from '../models/labelData.model';
 import mongoose from 'mongoose';
-
+import { logAction } from '../utils/logger'; // ✅ Imported Logger
 
 function cleanNumber(v: any): number {
   if (v === undefined || v === null || v === '') return 0;
@@ -236,6 +236,18 @@ export const analyzePaymentsController = async (req: Request, res: Response) => 
     const savedPayment = await newPayment.save({ session });
     await session.commitTransaction();
 
+    // ✅ AUDIT LOG: Payments Processed
+    if ((req as any).user) {
+        await logAction(
+            (req as any).user._id,
+            (req as any).user.name,
+            "PROCESS",
+            "Payments",
+            `Processed payment sheet: ${req.file.originalname}. Net Amount: ${totalNetOrderAmount.toFixed(2)}`,
+            gstin // 👈 ADDED 6th ARGUMENT (GSTIN)
+        );
+    }
+
     res.status(201).json({
       success: true,
       stats: { 
@@ -285,52 +297,7 @@ export const getPaymentHistory = async (req: Request, res: Response) => {
   }
 };
 
-export const getAggregatePaymentStats = async (req: Request, res: Response) => {
-  try {
-    const { gstin } = req.query;
-    if (!gstin) { 
-      return res.status(400).json({ message: 'GSTIN is required.' }); 
-    }
 
-    const stats = await PaymentHistory.aggregate([
-      { $match: { businessGstin: gstin as string } },
-      {
-        $group: {
-          _id: null,
-          totalNetOrderAmount: { $sum: "$totalNetOrderAmount" },
-          totalAdsCost: { $sum: "$totalAdsCost" },
-          totalReferralEarnings: { $sum: "$totalReferralEarnings" },
-          totalCompensation: { $sum: "$totalCompensation" },
-          totalRecoveries: { $sum: "$totalRecoveries" },
-          totalPaymentsCount: { $sum: "$paymentsCount" },
-        }
-      }
-    ]);
-
-    if (stats.length === 0) {
-      return res.status(200).json({
-        totalNetOrderAmount: 0, totalAdsCost: 0, totalReferralEarnings: 0,
-        totalCompensation: 0, totalRecoveries: 0, paymentsCount: 0, averagePayment: 0,
-      });
-    }
-    
-    const result = stats[0];
-    const averagePayment = result.totalPaymentsCount > 0 ? result.totalNetOrderAmount / result.totalPaymentsCount : 0;
-
-    res.status(200).json({
-      totalNetOrderAmount: result.totalNetOrderAmount,
-      totalAdsCost: result.totalAdsCost,
-      totalReferralEarnings: result.totalReferralEarnings,
-      totalCompensation: result.totalCompensation,
-      totalRecoveries: result.totalRecoveries,
-      paymentsCount: result.totalPaymentsCount,
-      averagePayment: averagePayment,
-    });
-    
-  } catch (error: any) {
-    res.status(500).json({ message: 'Server error while fetching stats.' });
-  }
-};
 
 export const getAllTimePaymentTrend = async (req: Request, res: Response) => {
   try {
@@ -374,6 +341,156 @@ export const getPaymentDetails = async (req: Request, res: Response) => {
     res.status(200).json(paymentData);
 
   } catch (error: any) {
+    res.status(500).json({ message: "Server error fetching details" });
+  }
+};
+// backend/src/controllers/payments.controller.ts
+
+// ... (previous imports and functions remain same) ...
+
+// --- MODIFIED: Get Stats filtered by Date (Default: This Month) ---
+export const getAggregatePaymentStats = async (req: Request, res: Response) => {
+  try {
+    const { gstin, startDate, endDate } = req.query;
+    if (!gstin) { 
+      return res.status(400).json({ message: 'GSTIN is required.' }); 
+    }
+
+    // 1. Build Date Filter
+    let dateFilter: any = {};
+    
+    if (startDate && endDate) {
+        // Custom Range
+        dateFilter = {
+            $gte: new Date(startDate as string),
+            $lte: new Date(new Date(endDate as string).setHours(23, 59, 59, 999))
+        };
+    } else {
+        // Default: Current Month
+        const now = new Date();
+        const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+        const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        dateFilter = { $gte: firstDay, $lte: lastDay };
+    }
+
+    // 2. Aggregate across all history records, filtering the internal array
+    // Since payment details are inside 'rawOrderPayments', and that array can be huge, 
+    // simply summing 'totalNetOrderAmount' from the parent document isn't accurate if we split by date.
+    // However, if your 'PaymentHistory' document represents a single sheet upload (e.g. a weekly payout),
+    // filtering by 'uploadedAt' or 'startDate' of the document might be easier.
+    
+    // OPTION A: Filter by Document Date (If one doc = one settlement period) - FASTER
+    const matchQuery = {
+        businessGstin: gstin,
+        startDate: dateFilter // Assumes 'startDate' field in doc is the settlement date
+    };
+
+    const stats = await PaymentHistory.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: null,
+          totalNetOrderAmount: { $sum: "$totalNetOrderAmount" },
+          totalAdsCost: { $sum: "$totalAdsCost" },
+          totalReferralEarnings: { $sum: "$totalReferralEarnings" },
+          totalCompensation: { $sum: "$totalCompensation" },
+          totalRecoveries: { $sum: "$totalRecoveries" },
+          totalPaymentsCount: { $sum: "$paymentsCount" },
+        }
+      }
+    ]);
+
+    if (stats.length === 0) {
+      return res.status(200).json({
+        totalNetOrderAmount: 0, totalAdsCost: 0, totalReferralEarnings: 0,
+        totalCompensation: 0, totalRecoveries: 0, paymentsCount: 0, averagePayment: 0,
+      });
+    }
+    
+    const result = stats[0];
+    const averagePayment = result.totalPaymentsCount > 0 ? result.totalNetOrderAmount / result.totalPaymentsCount : 0;
+
+    res.status(200).json({
+      totalNetOrderAmount: result.totalNetOrderAmount,
+      totalAdsCost: result.totalAdsCost,
+      totalReferralEarnings: result.totalReferralEarnings,
+      totalCompensation: result.totalCompensation,
+      totalRecoveries: result.totalRecoveries,
+      paymentsCount: result.totalPaymentsCount,
+      averagePayment: averagePayment,
+    });
+    
+  } catch (error: any) {
+    res.status(500).json({ message: 'Server error while fetching stats.' });
+  }
+};
+
+// --- NEW: Server-Side Pagination for Details ---
+export const getPaymentDetailsPaginated = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 10, search = "" } = req.query;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid Payment ID" });
+    }
+
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    // We use aggregation to filter and slice the 'rawOrderPayments' array
+    const result = await PaymentHistory.aggregate([
+      { $match: { _id: new mongoose.Types.ObjectId(id) } },
+      {
+        $project: {
+          fileName: 1,
+          endDate: 1,
+          totalNetOrderAmount: 1,
+          totalCount: { $size: "$rawOrderPayments" }, // Total rows before filter
+          rawOrderPayments: {
+            $filter: {
+              input: "$rawOrderPayments",
+              as: "item",
+              cond: {
+                $or: [
+                  { $regexMatch: { input: "$$item.Sub Order No", regex: search as string, options: "i" } },
+                  { $regexMatch: { input: "$$item.Supplier SKU", regex: search as string, options: "i" } }
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          fileName: 1,
+          endDate: 1,
+          totalNetOrderAmount: 1,
+          totalFilteredCount: { $size: "$rawOrderPayments" }, // Count after search
+          paginatedResults: { $slice: ["$rawOrderPayments", skip, limitNum] } // Slice for pagination
+        }
+      }
+    ]);
+
+    if (!result.length) {
+        return res.status(404).json({ message: "Not found" });
+    }
+
+    const data = result[0];
+    
+    res.status(200).json({
+        fileName: data.fileName,
+        endDate: data.endDate,
+        totalNetOrderAmount: data.totalNetOrderAmount,
+        rawOrderPayments: data.paginatedResults,
+        totalItems: data.totalFilteredCount,
+        totalPages: Math.ceil(data.totalFilteredCount / limitNum),
+        currentPage: pageNum
+    });
+
+  } catch (error: any) {
+    console.error("Pagination Error:", error);
     res.status(500).json({ message: "Server error fetching details" });
   }
 };

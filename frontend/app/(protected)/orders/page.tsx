@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useBusiness, api } from '../../../providers/GlobalProvider';
 import { ShoppingCart, ListChecks, BarChart3, Banknote, RefreshCw, Filter, XCircle } from 'lucide-react';
-
+import ProtectRoute from "@/components/ProtectRoute";
 // --- UPDATED Interfaces to match new OrderData model ---
 interface Product {
   sku?: string;
@@ -143,6 +143,7 @@ export default function OrdersPage() {
   if (!selectedBusiness) return <div className="p-6 bg-yellow-100 text-yellow-800 rounded-md">Please select a business to view its orders.</div>;
 
   return (
+    <ProtectRoute permission="orders">
     <div className="space-y-6">
       <h1 className="text-3xl font-bold text-slate-800">Order Dashboard</h1>
       {processMessage && <p className="text-sm font-medium">{processMessage}</p>}
@@ -262,5 +263,6 @@ export default function OrdersPage() {
         )}
       </div>
     </div>
+    </ProtectRoute>
   );
 }

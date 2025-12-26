@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState, ChangeEvent, useEffect, useMemo } from 'react';
+import React, { useState, ChangeEvent, useEffect } from 'react';
 import { useBusiness, api } from '../../../providers/GlobalProvider';
 import { 
     Upload, DollarSign, Calendar, CheckCircle, Activity, FileText, 
-    AlertCircle, Filter, Eye, RefreshCw, LineChart, ArrowLeft,
+    AlertCircle, Eye, RefreshCw, LineChart, ArrowLeft,
     Search, ChevronLeft, ChevronRight, X
 } from 'lucide-react';
 import { 
@@ -21,16 +21,19 @@ interface PaymentStats {
     paymentsCount: number;
     averagePayment: number;
 }
+
 interface TrendData {
     date: string;
     payment: number;
 }
+
 interface UploadResponse {
     fileName: string;
     stats: PaymentStats;
     paymentTrend: TrendData[];
     savedPayment: PaymentHistoryItem;
 }
+
 interface PaymentHistoryItem {
     _id: string;
     fileName: string;
@@ -38,32 +41,9 @@ interface PaymentHistoryItem {
     totalNetOrderAmount: number;
     startDate: string;
     endDate: string;
-    paymentsCount?: number; 
 }
 
-// --- Specific Interface for the Detailed View Data ---
-interface OrderPaymentRow {
-    "Sub Order No": string;
-    "Order Date": string;
-    "Supplier SKU": string;
-    "Price Type": string;
-    "Total Sale Amount (Incl. Shipping & GST)": string;
-    "Claims": string;
-    "Compensation": string;
-    "Recovery": string;
-    "Final Settlement Amount": string;
-    [key: string]: any; 
-}
-
-interface PaymentDetailData {
-    _id: string;
-    fileName: string;
-    rawOrderPayments: OrderPaymentRow[];
-    endDate:Date,
-    totalNetOrderAmount: number;
-}
-
-// --- Helper ---
+// --- Helper Functions ---
 const formatCurrency = (value: number) => 
     new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(value);
 
@@ -92,7 +72,7 @@ const StatCard = ({ title, value, icon, highlight }: { title: string; value: str
     </div>
 );
 
-// --- Component: Detailed View (White Box) ---
+// --- Component: Detailed View (Server-Side Pagination) ---
 const UploadDetailView = ({ 
     onBack, 
     uploadId 
@@ -101,7 +81,16 @@ const UploadDetailView = ({
     uploadId: string 
 }) => {
     
-    const [detailData, setDetailData] = useState<PaymentDetailData | null>(null);
+    // Data State
+    const [pageData, setPageData] = useState<any[]>([]);
+    const [meta, setMeta] = useState({ 
+        totalItems: 0, 
+        totalPages: 0, 
+        currentPage: 1, 
+        endDate: '', 
+        totalAmount: 0 
+    });
+    
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -110,13 +99,28 @@ const UploadDetailView = ({
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(10);
 
-    // 1. Fetch Data on Mount
+    // Fetch Paginated Data from Backend
     useEffect(() => {
         const fetchDetails = async () => {
             setLoading(true);
+            setError(null);
             try {
-                const { data } = await api.get(`/payments/history/${uploadId}`);
-                setDetailData(data);
+                const params = {
+                    page: currentPage,
+                    limit: itemsPerPage,
+                    search: searchTerm
+                };
+                // Calls the new paginated endpoint
+                const { data } = await api.get(`/payments/history/${uploadId}/paginated`, { params });
+                
+                setPageData(data.rawOrderPayments);
+                setMeta({
+                    totalItems: data.totalItems,
+                    totalPages: data.totalPages,
+                    currentPage: data.currentPage,
+                    endDate: data.endDate,
+                    totalAmount: data.totalNetOrderAmount
+                });
             } catch (err) {
                 console.error("Failed to load details", err);
                 setError("Failed to load payment details.");
@@ -128,36 +132,14 @@ const UploadDetailView = ({
         if (uploadId) {
             fetchDetails();
         }
-    }, [uploadId]);
+    }, [uploadId, currentPage, itemsPerPage, searchTerm]);
 
-    // 2. Compute Filtered & Paginated Data
-    const processedData = useMemo(() => {
-        if (!detailData?.rawOrderPayments) return { pageData: [], totalItems: 0, totalPages: 0, validPage: 1};
-
-        // A. Filter
-        const filtered = detailData.rawOrderPayments.filter(row => {
-            const searchLower = searchTerm.toLowerCase();
-            return (
-                (row["Sub Order No"]?.toLowerCase() || "").includes(searchLower) ||
-                (row["Supplier SKU"]?.toLowerCase() || "").includes(searchLower) ||
-                (row["Price Type"]?.toLowerCase() || "").includes(searchLower)
-            );
-        });
-
-        // B. Paginate
-        const totalItems = filtered.length;
-        const totalPages = Math.ceil(totalItems / itemsPerPage);
-        const validPage = Math.min(Math.max(1, currentPage), Math.max(1, totalPages)); 
-        
-        const startIndex = (validPage - 1) * itemsPerPage;
-        const pageData = filtered.slice(startIndex, startIndex + itemsPerPage);
-
-        return { pageData, totalItems, totalPages, validPage };
-    }, [detailData, searchTerm, currentPage, itemsPerPage]);
-
-    // Reset to page 1 when search changes
+    // Reset to page 1 when search term changes (Debounced)
     useEffect(() => {
-        setCurrentPage(1);
+        const timer = setTimeout(() => {
+            if(currentPage !== 1) setCurrentPage(1);
+        }, 500);
+        return () => clearTimeout(timer);
     }, [searchTerm]);
 
     const renderTypeBadge = (type: string) => {
@@ -168,22 +150,8 @@ const UploadDetailView = ({
         return <span className="text-indigo-700 bg-indigo-50 font-medium text-xs px-2 py-1 rounded border border-indigo-100">{type}</span>;
     };
 
-    if (loading) return (
-        <div className="bg-white w-full rounded-xl border border-gray-200 shadow-sm h-[600px] flex items-center justify-center">
-            <RefreshCw className="animate-spin text-indigo-500" size={32} />
-        </div>
-    );
-
-    if (error || !detailData) return (
-        <div className="bg-white w-full rounded-xl border border-gray-200 shadow-sm h-[600px] flex flex-col items-center justify-center gap-4">
-            <AlertCircle className="text-red-400" size={48} />
-            <p className="text-gray-600">{error || "No data found."}</p>
-            <button onClick={onBack} className="text-indigo-600 hover:underline font-medium cursor-pointer">Go Back</button>
-        </div>
-    );
-
     return (
-        <div className="bg-white w-full rounded-xl border border-gray-200 shadow-lg flex flex-col h-[600px] overflow-hidden">
+        <div className="bg-white w-full rounded-xl border border-gray-200 shadow-lg flex flex-col h-[700px] overflow-hidden">
             
             {/* --- Header Section --- */}
             <div className="p-5 border-b border-gray-100 flex flex-col gap-4 bg-gray-50/50">
@@ -195,7 +163,7 @@ const UploadDetailView = ({
                         <div>
                             <h3 className="font-bold text-lg text-gray-900">Payment Details</h3>
                             <p className="text-xs text-gray-500">
-                                Settlement Date: {new Date(detailData.endDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+                                Settlement Date: {meta.endDate ? new Date(meta.endDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : '...'}
                             </p>
                         </div>
                     </div>
@@ -215,7 +183,7 @@ const UploadDetailView = ({
                         <div className="flex items-center gap-2">
                              <select 
                                 value={itemsPerPage}
-                                onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                                onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
                                 className="bg-white border border-gray-300 text-gray-900 py-2 pl-3 pr-8 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 cursor-pointer font-medium"
                             >
                                 <option value={10}>10 rows</option>
@@ -226,14 +194,14 @@ const UploadDetailView = ({
                             <div className="flex rounded-md shadow-sm">
                                 <button 
                                     onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                                    disabled={processedData.validPage === 1}
+                                    disabled={currentPage === 1 || loading}
                                     className="p-2 border border-gray-300 rounded-l-lg bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50 cursor-pointer"
                                 >
                                     <ChevronLeft size={16} />
                                 </button>
                                 <button 
-                                    onClick={() => setCurrentPage(prev => Math.min(processedData.totalPages, prev + 1))}
-                                    disabled={processedData.validPage === processedData.totalPages || processedData.totalPages === 0}
+                                    onClick={() => setCurrentPage(prev => Math.min(meta.totalPages, prev + 1))}
+                                    disabled={currentPage === meta.totalPages || loading}
                                     className="p-2 border-l-0 border border-gray-300 rounded-r-lg bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50 cursor-pointer"
                                 >
                                     <ChevronRight size={16} />
@@ -245,55 +213,76 @@ const UploadDetailView = ({
             </div>
 
             {/* --- Table Section --- */}
-            <div className="flex-1 overflow-auto">
-                <table className="min-w-full text-left border-collapse">
-                    <thead className="bg-gray-50 sticky top-0 z-10 text-xs font-bold text-gray-500 uppercase tracking-wider">
-                        <tr>
-                            <th className="px-6 py-3 border-b border-gray-200 whitespace-nowrap">Order Date</th>
-                            <th className="px-6 py-3 border-b border-gray-200 whitespace-nowrap">Sub Order No.</th>
-                            <th className="px-6 py-3 border-b border-gray-200 whitespace-nowrap">SKU</th>
-                            <th className="px-6 py-3 border-b border-gray-200 whitespace-nowrap">Type</th>
-                            <th className="px-6 py-3 border-b border-gray-200 text-right whitespace-nowrap">Sale Amount</th>
-                            <th className="px-6 py-3 border-b border-gray-200 text-right whitespace-nowrap">Claims/Comp</th>
-                            <th className="px-6 py-3 border-b border-gray-200 text-right whitespace-nowrap">Recovery</th>
-                            <th className="px-6 py-3 border-b border-gray-200 text-right whitespace-nowrap bg-gray-100">Settlement</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 text-sm text-gray-700">
-                        {processedData.pageData.length === 0 ? (
-                            <tr>
-                                <td colSpan={8} className="px-6 py-12 text-center text-gray-400">
-                                    No transaction records found matching your search.
-                                </td>
-                            </tr>
-                        ) : (
-                            processedData.pageData.map((row, index) => {
-                                const dateStr = row["Order Date"] ? row["Order Date"].split(' ')[0] : '-';
-                                const amount = parseFloat(row["Total Sale Amount (Incl. Shipping & GST)"] || "0");
-                                const claims = parseFloat(row["Claims"] || "0") + parseFloat(row["Compensation"] || "0");
-                                const recovery = parseFloat(row["Recovery"] || "0");
-                                const net = parseFloat(row["Final Settlement Amount"] || "0");
+            <div className="flex-1 overflow-auto relative">
+                {loading && (
+                    <div className="absolute inset-0 bg-white/80 z-20 flex items-center justify-center">
+                        <RefreshCw className="animate-spin text-indigo-500" size={32} />
+                    </div>
+                )}
 
-                                return (
-                                    <tr key={index} className="hover:bg-indigo-50/30 transition-colors cursor-pointer">
-                                        <td className="px-6 py-3 whitespace-nowrap text-gray-500 text-xs">{dateStr}</td>
-                                        <td className="px-6 py-3 font-medium text-gray-900 whitespace-nowrap">{row["Sub Order No"]}</td>
-                                        <td className="px-6 py-3 max-w-[200px] truncate text-xs text-gray-600" title={row["Supplier SKU"]}>
-                                            {row["Supplier SKU"]}
-                                        </td>
-                                        <td className="px-6 py-3 whitespace-nowrap">
-                                            {renderTypeBadge(row["Price Type"])}
-                                        </td>
-                                        <td className="px-6 py-3 text-right whitespace-nowrap font-mono text-gray-900">{formatCurrency(amount)}</td>
-                                        <td className="px-6 py-3 text-right whitespace-nowrap font-mono text-green-600">{claims > 0 ? formatCurrency(claims) : '-'}</td>
-                                        <td className="px-6 py-3 text-right whitespace-nowrap font-mono text-red-500">{recovery !== 0 ? formatCurrency(recovery) : '-'}</td>
-                                        <td className="px-6 py-3 text-right font-bold text-gray-900 bg-gray-50/50 whitespace-nowrap font-mono">{formatCurrency(net)}</td>
-                                    </tr>
-                                );
-                            })
-                        )}
-                    </tbody>
-                </table>
+                {error ? (
+                    <div className="h-full flex flex-col items-center justify-center text-red-500 gap-2">
+                        <AlertCircle size={32} />
+                        <p>{error}</p>
+                    </div>
+                ) : (
+                    <table className="min-w-full text-left border-collapse">
+                        <thead className="bg-gray-50 sticky top-0 z-10 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                            <tr>
+                                <th className="px-6 py-3 border-b border-gray-200 whitespace-nowrap">Order Date</th>
+                                <th className="px-6 py-3 border-b border-gray-200 whitespace-nowrap">Sub Order No.</th>
+                                <th className="px-6 py-3 border-b border-gray-200 whitespace-nowrap">SKU</th>
+                                <th className="px-6 py-3 border-b border-gray-200 whitespace-nowrap">Type</th>
+                                <th className="px-6 py-3 border-b border-gray-200 text-right whitespace-nowrap">Sale Amount</th>
+                                <th className="px-6 py-3 border-b border-gray-200 text-right whitespace-nowrap">Claims/Comp</th>
+                                <th className="px-6 py-3 border-b border-gray-200 text-right whitespace-nowrap">Recovery</th>
+                                <th className="px-6 py-3 border-b border-gray-200 text-right whitespace-nowrap bg-gray-100">Settlement</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 text-sm text-gray-700">
+                            {pageData.length === 0 && !loading ? (
+                                <tr>
+                                    <td colSpan={8} className="px-6 py-12 text-center text-gray-400">
+                                        No transaction records found matching your search.
+                                    </td>
+                                </tr>
+                            ) : (
+                                pageData.map((row, index) => {
+                                    const dateStr = row["Order Date"] ? row["Order Date"].split(' ')[0] : '-';
+                                    const amount = parseFloat(row["Total Sale Amount (Incl. Shipping & GST)"] || "0");
+                                    const claims = parseFloat(row["Claims"] || "0") + parseFloat(row["Compensation"] || "0");
+                                    const recovery = parseFloat(row["Recovery"] || "0");
+                                    const net = parseFloat(row["Final Settlement Amount"] || "0");
+
+                                    return (
+                                        <tr key={index} className="hover:bg-indigo-50/30 transition-colors">
+                                            <td className="px-6 py-3 whitespace-nowrap text-gray-500 text-xs">{dateStr}</td>
+                                            <td className="px-6 py-3 font-medium text-gray-900 whitespace-nowrap">{row["Sub Order No"]}</td>
+                                            <td className="px-6 py-3 max-w-[200px] truncate text-xs text-gray-600" title={row["Supplier SKU"]}>
+                                                {row["Supplier SKU"]}
+                                            </td>
+                                            <td className="px-6 py-3 whitespace-nowrap">
+                                                {renderTypeBadge(row["Price Type"])}
+                                            </td>
+                                            <td className="px-6 py-3 text-right whitespace-nowrap font-mono text-gray-900">{formatCurrency(amount)}</td>
+                                            <td className="px-6 py-3 text-right whitespace-nowrap font-mono text-green-600">{claims > 0 ? formatCurrency(claims) : '-'}</td>
+                                            <td className="px-6 py-3 text-right whitespace-nowrap font-mono text-red-500">{recovery !== 0 ? formatCurrency(recovery) : '-'}</td>
+                                            <td className="px-6 py-3 text-right font-bold text-gray-900 bg-gray-50/50 whitespace-nowrap font-mono">{formatCurrency(net)}</td>
+                                        </tr>
+                                    );
+                                })
+                            )}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+
+            {/* Footer Pagination */}
+            <div className="p-4 border-t border-gray-200 bg-gray-50 flex justify-between items-center text-xs text-gray-500">
+                <span>
+                    Showing {meta.totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} - {Math.min(currentPage * itemsPerPage, meta.totalItems)} of {meta.totalItems}
+                </span>
+                <span>Page {currentPage} of {meta.totalPages || 1}</span>
             </div>
         </div>
     );
@@ -315,11 +304,19 @@ export default function PaymentsDashboard() {
     const [viewDetailsId, setViewDetailsId] = useState<string | null>(null);
     const [statsLoading, setStatsLoading] = useState(true);
 
-    // Filter State
-    const [startDate, setStartDate] = useState("");
-    const [endDate, setEndDate] = useState("");
+    // ✅ Initialize Filters to Current Month
+    const [startDate, setStartDate] = useState(() => {
+        const now = new Date();
+        return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    });
+    
+    const [endDate, setEndDate] = useState(() => {
+        const now = new Date();
+        // Set to end of current month
+        return new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+    });
 
-    // Fetch Data (Filtered or All Time)
+    // Fetch Data
     const fetchData = async () => {
         if (!selectedBusiness) return;
         setStatsLoading(true);
@@ -328,13 +325,13 @@ export default function PaymentsDashboard() {
         try {
             const params = { 
                 gstin: selectedBusiness.gstin,
-                startDate: startDate || undefined, // Backend should handle empty/undefined
-                endDate: endDate || undefined
+                startDate,
+                endDate
             };
 
             const [statsRes, historyRes, trendRes] = await Promise.all([
                 api.get('/payments/stats', { params }),
-                api.get('/payments/history', { params: { gstin: selectedBusiness.gstin } }), // History usually stays global list
+                api.get('/payments/history', { params: { gstin: selectedBusiness.gstin } }), // History is usually not date filtered
                 api.get('/payments/trend', { params })
             ]);
 
@@ -350,19 +347,16 @@ export default function PaymentsDashboard() {
         }
     };
     
+    // Re-fetch when business or date filters change
     useEffect(() => {
         fetchData();
-    }, [selectedBusiness]);
-
-    // Re-fetch when filters change
-    const handleFilterApply = () => {
-        fetchData();
-    };
+    }, [selectedBusiness, startDate, endDate]); // Added startDate/endDate dependency
 
     const handleClearFilter = () => {
-        setStartDate("");
-        setEndDate("");
-        setTimeout(() => fetchData(), 0);
+        // Reset to default (Current Month)
+        const now = new Date();
+        setStartDate(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]);
+        setEndDate(new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0]);
     };
 
     const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -385,7 +379,7 @@ export default function PaymentsDashboard() {
         try {
             const { data }: { data: UploadResponse } = await api.post('/payments/upload', formData);
             setHistories(prev => [data.savedPayment, ...prev]);
-            fetchData();
+            fetchData(); // Refresh stats
             setFile(null); 
         } catch (err: any) {
             setError(err.response?.data?.message || "Upload failed. Check file format.");
@@ -432,20 +426,19 @@ export default function PaymentsDashboard() {
                             />
                         </div>
                         <div className="flex gap-2">
-                             <button 
-                                onClick={handleFilterApply}
+                            <button 
+                                onClick={fetchData} // Manual refresh
                                 className="cursor-pointer px-4 py-2.5 bg-indigo-50 text-indigo-700 text-sm font-medium rounded-lg hover:bg-indigo-100 transition-colors border border-indigo-100"
                             >
                                 Apply
                             </button>
-                            {(startDate || endDate) && (
-                                <button 
-                                    onClick={handleClearFilter}
-                                    className="cursor-pointer px-3 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 transition-colors"
-                                >
-                                    <X size={16} />
-                                </button>
-                            )}
+                            <button 
+                                onClick={handleClearFilter}
+                                title="Reset to This Month"
+                                className="cursor-pointer px-3 py-2.5 bg-white border border-gray-200 text-gray-500 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                                <X size={16} />
+                            </button>
                         </div>
                     </div>
 

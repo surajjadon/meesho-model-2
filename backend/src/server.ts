@@ -12,7 +12,7 @@ import paymentsRoutes from './routes/payments.routes';
 import plRoutes from './routes/pl.routes';
 import returnsRoutes from './routes/returns.routes'; // 1. Import the new returns route
 import mongoose from 'mongoose';
-
+import teamRoutes from './routes/team.routes';
 dotenv.config();
 
 connectDB();
@@ -56,7 +56,8 @@ app.use('/api/cropper', cropperRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentsRoutes);
 app.use('/api/pl', plRoutes);
-app.use('/api/returns', returnsRoutes); // 2. Register the route
+app.use('/api/returns', returnsRoutes);
+app.use('/api/team', teamRoutes); // 2. Register the route
 
 app.get('/health', (req: Request, res: Response) => {
   const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';

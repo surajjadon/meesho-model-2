@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import PaymentHistory from '../models/PaymentHistory.model';
 import { SkuMapping } from '../models/skuMapping.model';
 import ReturnOrder from '../models/returnOrder.model';
+import { logAction } from '../utils/logger'; // ✅ Imported Logger
 
 // --- Helpers ---
 const cleanNumber = (v: any): number => {
@@ -103,9 +104,9 @@ export const getPLSummary = async (req: Request, res: Response) => {
             returnedUnits: number,
             rtoUnits: number,
             deliveredUnits: number,
-            inTransitUnits: number, // Mapping 'Shipped' to this
-            netAmount: number,      // Revenue
-            cogs: number            // Total Expenses
+            inTransitUnits: number, 
+            netAmount: number,      
+            cogs: number            
         }>();
 
         for (const history of histories) {
@@ -140,7 +141,6 @@ export const getPLSummary = async (req: Request, res: Response) => {
                 } 
                 else if (orderStatus.includes('shipped')) {
                     isInTransit = true;
-                    // Usually we don't deduct COGS until delivered, but for P&L simplicity we often do:
                     expense = costPrice; 
                 }
                 else if (orderStatus.includes('return')) {
@@ -152,7 +152,6 @@ export const getPLSummary = async (req: Request, res: Response) => {
                     expense = isDamaged ? (packagingCost + costPrice) : packagingCost;
                 }
                 else {
-                    // Other statuses (Cancelled, etc)
                     expense = 0;
                 }
 
@@ -190,7 +189,6 @@ export const getPLSummary = async (req: Request, res: Response) => {
             }
         }
 
-        // --- Final Formatting for Frontend ---
         const currProfit = currRevenue - currExpenses;
         const currMargin = currRevenue !== 0 ? (currProfit / currRevenue) * 100 : 0;
 
@@ -201,7 +199,6 @@ export const getPLSummary = async (req: Request, res: Response) => {
             margin: { value: currMargin }
         };
 
-        // Convert Map to Array with calculated fields for CSV
         const skuPLTable = Array.from(skuMonthlyPL.values()).map(item => {
             const profitLoss = item.netAmount - item.cogs;
             return {
@@ -210,10 +207,22 @@ export const getPLSummary = async (req: Request, res: Response) => {
                 margin: item.netAmount !== 0 ? (profitLoss / item.netAmount) * 100 : 0,
                 costPerUnit: item.units > 0 ? (item.cogs / item.units) : 0,
                 aspPerUnit: item.units > 0 ? (item.netAmount / item.units) : 0,
-                unidentifiedUnits: 0, // Placeholder matching CSV
-                unmatchedUnits: 0     // Placeholder matching CSV
+                unidentifiedUnits: 0,
+                unmatchedUnits: 0
             };
         }).sort((a, b) => b.month.localeCompare(a.month));
+
+        // ✅ AUDIT LOG: P&L Summary Generated
+        if ((req as any).user) {
+            await logAction(
+                (req as any).user._id,
+                (req as any).user.name,
+                "PROCESS", 
+                "Reports", 
+                `Generated P&L Summary for GSTIN: ${gstin} (${timeFilter || 'This Month'}). Rev: ${currRevenue.toFixed(2)}, Profit: ${currProfit.toFixed(2)}`,
+                gstin as string // 👈 ADDED 6th ARGUMENT (GSTIN)
+            );
+        }
 
         res.status(200).json({ kpiStats, skuPL: skuPLTable });
 

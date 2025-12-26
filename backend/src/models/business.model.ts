@@ -17,8 +17,8 @@ const BusinessSchema = new Schema<IBusiness>({
   gstin: { 
     type: String, 
     required: true, 
-    unique: true, 
     uppercase: true, 
+    unique: false,
     trim: true 
   },
   accountName: { type: String, required: true, trim: true },

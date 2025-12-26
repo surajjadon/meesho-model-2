@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { InventoryItem } from '../models/inventoryItem.model';
 import { StockHistory } from '../models/stockHistory.model';
 import mongoose from 'mongoose';
-
+import { logAction } from '../utils/logger';
 // GET all inventory items for a business
 export const getInventoryItems = async (req: Request, res: Response) => {
   try {

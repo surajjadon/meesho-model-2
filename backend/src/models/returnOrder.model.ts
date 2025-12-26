@@ -18,7 +18,7 @@ export interface IReturnOrder extends Document {
   receivedStatus: 'Pending' | 'Received';
   
   // Verification status (what user marks it as)
-   verificationStatus: "None" | "Delivered" | "Cancelled" | "Return" | "RTO" | "Undelivered" | "RTO and Damaged" | "Return and Damaged";
+   verificationStatus: "None" | "Delivered" | "Cancelled" | "Return" | "RTO" | "Undelivered" | "Damaged";
   
   verifiedAt?: Date;
   receivedAt?: Date; // ✅ NEW: When item was scanned/received

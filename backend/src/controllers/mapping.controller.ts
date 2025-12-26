@@ -1,8 +1,9 @@
 import { Request, Response } from 'express';
 import { SkuMapping } from '../models/skuMapping.model';
-import { SkuMappingHistory } from '../models/SkuMappingHistory.model'; // <--- Import the new History Model
+import { SkuMappingHistory } from '../models/SkuMappingHistory.model'; 
 import { UnmappedSku } from '../models/unmappedSku.model';
 import LabelData from '../models/labelData.model'; 
+import { logAction } from '../utils/logger'; // ✅ Imported Logger
 
 // GET /mappings/check-sku/:sku
 export const checkSku = async (req: Request, res: Response) => {
@@ -52,7 +53,6 @@ export const getMappings = async (req: Request, res: Response) => {
 export const getMappingHistory = async (req: Request, res: Response) => {
     const { id } = req.params;
     try {
-        // Fetch history sorted by most recent edit first
         const history = await SkuMappingHistory.find({ skuMappingId: id })
             .sort({ updatedAt: -1 });
         
@@ -90,7 +90,7 @@ export const createMapping = async (req: Request, res: Response) => {
         });
        
        await SkuMappingHistory.create({
-            skuMappingId: newMapping._id, // <--- This was missing in your original code
+            skuMappingId: newMapping._id, 
             gstin, 
             sku: sanitizedSku,
             manufacturingPrice: cleanMfgPrice,
@@ -107,6 +107,18 @@ export const createMapping = async (req: Request, res: Response) => {
         const populatedMapping = await SkuMapping.findById(newMapping._id)
             .populate('mappedProducts.inventoryItem', 'title stock');
         
+        // ✅ AUDIT LOG: Mapping Created
+        if ((req as any).user) {
+            await logAction(
+                (req as any).user._id,
+                (req as any).user.name,
+                "CREATE",
+                "Mappings",
+                `Created SKU mapping: ${sanitizedSku} (Mfg: ${cleanMfgPrice}, Pkg: ${cleanPackagingCost})`,
+                gstin // 👈 6th Argument
+            );
+        }
+
         res.status(201).json(populatedMapping);
 
     } catch (error: any) {
@@ -200,6 +212,18 @@ export const updateMapping = async (req: Request, res: Response) => {
         const updatedMapping = await SkuMapping.findByIdAndUpdate(id, updateData, { new: true })
             .populate('mappedProducts.inventoryItem', 'title stock');
 
+        // ✅ AUDIT LOG: Mapping Updated
+        if ((req as any).user) {
+            await logAction(
+                (req as any).user._id,
+                (req as any).user.name,
+                "UPDATE",
+                "Mappings",
+                `Updated mapping for SKU: ${sanitizedSku} (New Mfg: ${updateData.manufacturingPrice}, New Pkg: ${updateData.packagingCost})`,
+                gstin // 👈 6th Argument
+            );
+        }
+
         res.status(200).json(updatedMapping);
 
     } catch (error: any)  {
@@ -224,17 +248,25 @@ export const deleteMapping = async (req: Request, res: Response) => {
             return res.status(404).json({ message: "Mapping not found or you do not have permission to delete it." });
         }
 
-        // 1. Delete History associated with this mapping
         await SkuMappingHistory.deleteMany({ skuMappingId: id });
-
-        // 2. Delete the Main Mapping
         await SkuMapping.findByIdAndDelete(id);
 
-        // 3. Reset Unmapped status
         await UnmappedSku.updateMany(
             { gstin, sku: mappingToDelete.sku, status: 'mapped' },
             { $set: { status: 'pending' } }
         );
+
+        // ✅ AUDIT LOG: Mapping Deleted
+        if ((req as any).user) {
+            await logAction(
+                (req as any).user._id,
+                (req as any).user.name,
+                "DELETE",
+                "Mappings",
+                `Deleted mapping for SKU: ${mappingToDelete.sku}`,
+                gstin // 👈 6th Argument
+            );
+        }
 
         res.status(200).json({ message: "Mapping and history deleted successfully." });
 
@@ -251,20 +283,32 @@ export const updateHistoryRecord = async (req: Request, res: Response) => {
     const { manufacturingPrice, packagingCost } = req.body;
 
     try {
-        // 1. Find the history record
         const historyRecord = await SkuMappingHistory.findById(historyId);
 
         if (!historyRecord) {
             return res.status(404).json({ message: "History record not found." });
         }
 
-        // 2. Update ONLY the costs. We do NOT change the 'editedAt' date.
+        const oldMfg = historyRecord.manufacturingPrice;
+        const oldPkg = historyRecord.packagingCost;
+
         historyRecord.manufacturingPrice = parseFloat(manufacturingPrice) || 0;
         historyRecord.packagingCost = parseFloat(packagingCost) || 0;
         
-        // Optional: If you want to track WHEN this fix happened, you could add a 'fixedAt' field, 
-        // but to keep it "on that date only" as requested, we just save.
         await historyRecord.save();
+
+        // ✅ AUDIT LOG: History Record Fixed
+        // Note: GSTIN is stored inside the history record
+        if ((req as any).user) {
+            await logAction(
+                (req as any).user._id,
+                (req as any).user.name,
+                "UPDATE",
+                "Mappings",
+                `Updated historical costs for SKU: ${historyRecord.sku} (Date: ${new Date(historyRecord.updatedAt).toLocaleDateString()}). Msg: ${oldMfg}->${historyRecord.manufacturingPrice}, Pkg: ${oldPkg}->${historyRecord.packagingCost}`,
+                historyRecord.gstin // 👈 6th Argument (from fetched record)
+            );
+        }
 
         res.status(200).json(historyRecord);
 

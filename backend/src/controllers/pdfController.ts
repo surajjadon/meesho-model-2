@@ -9,6 +9,7 @@ import { SkuMapping } from '../models/skuMapping.model';
 import ProcessingHistory from '../models/processingHistory.model';
 import { StockHistory } from '../models/stockHistory.model';
 import mongoose from 'mongoose';
+import { logAction } from '../utils/logger'; // ✅ Imported Logger
 
 // Helper function to escape regex special characters
 function escapeRegex(str: string): string {
@@ -361,6 +362,18 @@ export const parsePDFController = async (req: Request, res: Response): Promise<v
     console.log(`   ⏭️ Orders Skipped: ${skippedCount}`);
     console.log(`   📦 Inventory Deducted: ${inventoryDeductedCount} orders`);
     console.log(`   ⚠️ Unmapped SKUs: ${unmappedSkus.size}`);
+
+    // ✅ AUDIT LOG: PDF Processed
+    if ((req as any).user) {
+        await logAction(
+            (req as any).user._id,
+            (req as any).user.name,
+            "PROCESS",
+            "Cropper",
+            `Processed PDF: ${req.file?.originalname || 'Unknown'}. Saved: ${createdCount}, Skipped: ${skippedCount}, Inv Deducted: ${inventoryDeductedCount}`,
+            targetGstin // 👈 ADDED 6th ARGUMENT (GSTIN)
+        );
+    }
 
     res.json({
       success: true,

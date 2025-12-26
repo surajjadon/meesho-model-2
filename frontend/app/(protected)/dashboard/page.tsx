@@ -51,6 +51,20 @@ const StatCard = ({ title, value, subtext, icon, color }: any) => (
 const formatCurrency = (val: number) => 
     new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(val);
 
+
+export const getUserData = async (email: string) => {
+  try {
+    const response = await api.get(
+      `/team/user-details/${encodeURIComponent(email)}`
+    );
+    return response.data;
+  } catch (error) {
+    console.error("Failed to fetch user data:", error);
+    throw error;
+  }
+};
+
+
 export default function DashboardPage() {
     const { selectedBusiness } = useBusiness();
     const { user } = useAuth();
@@ -98,6 +112,19 @@ export default function DashboardPage() {
         };
         fetchData();
     }, [selectedBusiness]);
+
+
+    useEffect(() => {
+  if (!user?.email) return;
+
+  const fetchUser = async () => {
+    const data = await getUserData(user.email);
+    console.log(data);
+  };
+
+  fetchUser();
+}, [user?.email]);
+
 
     // Filter Data by Month
     const filteredData = useMemo(() => {

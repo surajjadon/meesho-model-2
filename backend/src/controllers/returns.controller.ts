@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import ReturnOrder from "../models/returnOrder.model";
+import { logAction } from '../utils/logger'; // ✅ Imported Logger
 
 // ✅ Get all returns with filtering options
 export const getReturns = async (req: Request, res: Response) => {
@@ -257,6 +258,18 @@ export const verifyReturns = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "No matching returns found to verify." });
     }
 
+    // ✅ AUDIT LOG: Returns Verified
+    if ((req as any).user) {
+        await logAction(
+            (req as any).user._id,
+            (req as any).user.name,
+            "UPDATE",
+            "Returns",
+            `Verified ${result.modifiedCount} returns as '${status}' for GSTIN: ${gstin}`,
+            gstin
+        );
+    }
+
     console.log(`   ✅ Successfully updated ${result.modifiedCount} returns`);
     res.status(200).json({
       message: `${result.modifiedCount} returns updated successfully.`,
@@ -283,6 +296,9 @@ export const deleteReturns = async (req: Request, res: Response) => {
     const result = await ReturnOrder.deleteMany({ _id: { $in: ids } });
     console.log(`   ✅ Deleted ${result.deletedCount} returns`);
     
+    // ✅ AUDIT LOG: Returns Deleted
+
+
     res.status(200).json({
       message: `${result.deletedCount} returns deleted successfully.`,
     });
@@ -347,6 +363,18 @@ export const migrateReturnOrders = async (req: Request, res: Response) => {
 
     console.log(`\n   ✅ Migration complete. Updated ${updated} documents.`);
     
+    // ✅ AUDIT LOG: Migration Ran
+    if ((req as any).user) {
+        await logAction(
+            (req as any).user._id,
+            (req as any).user.name,
+            "UPDATE",
+            "Returns",
+            `Ran migration script. Updated ${updated} return documents.`,
+            gstin
+        );
+    }
+
     res.status(200).json({ 
       message: `Migration complete. Updated ${updated} documents.`,
       updated 

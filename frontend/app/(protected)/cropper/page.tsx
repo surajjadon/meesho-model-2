@@ -5,7 +5,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { Upload, Scissors, RefreshCw, CheckCircle, AlertTriangle, FileText, ArrowRight, Search, History, Calendar, RefreshCcw } from 'lucide-react';
 import { useBusiness, api } from "@/providers/GlobalProvider";
-
+import ProtectRoute from "@/components/ProtectRoute";
 interface ProcessedOrder {
   orderId: string;
   sku: string;
@@ -53,6 +53,9 @@ export default function CropperPage() {
   const [searchTerm, setSearchTerm] = useState("");
 
   // Fetch History - Accepts optional GSTIN override
+
+
+
   const fetchHistory = async (gstinOverride?: string) => {
     const gstinToUse = gstinOverride || selectedBusiness?.gstin;
     if (!gstinToUse) return;
@@ -140,6 +143,7 @@ export default function CropperPage() {
   ) || [];
 
   return (
+    <ProtectRoute permission="cropper">
     <div className="space-y-8 pb-10">
       <Head><title>Process PDF Labels</title></Head>
 
@@ -329,5 +333,6 @@ export default function CropperPage() {
         </div>
       )}
     </div>
+    </ProtectRoute>
   );
 }

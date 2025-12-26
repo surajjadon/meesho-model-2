@@ -1,5 +1,5 @@
 "use client";
-
+import ProtectRoute from "@/components/ProtectRoute";
 import React, {
   useEffect,
   useState,
@@ -721,6 +721,8 @@ export default function InventoryPage() {
     );
 
   return (
+    
+    <ProtectRoute permission="inventory">
     <div className="bg-slate-100 min-h-screen w-full p-6 lg:p-8 space-y-6">
       <div>
         <div className="flex items-center justify-between">
@@ -1052,5 +1054,6 @@ export default function InventoryPage() {
         onCreate={handleCreateItem}
       />
     </div>
+   </ProtectRoute>
   );
 }

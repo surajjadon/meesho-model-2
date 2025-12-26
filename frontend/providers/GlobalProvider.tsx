@@ -9,7 +9,7 @@ import axios from 'axios';
 // ====================================================================
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
-
+console.log("API URL:", process.env.NEXT_PUBLIC_API_URL);
 interface User {
   _id: string;
   name: string;
