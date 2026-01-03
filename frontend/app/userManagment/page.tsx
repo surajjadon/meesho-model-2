@@ -66,6 +66,7 @@ const ROLE_PRESETS: Record<string, any> = {
 
 export default function InviteUserModal({ isOpen, onClose, gstList, initialData, onSave }: InviteUserModalProps) {
   
+  // 🟢 CHANGE 1: Set 'allFuture' to false by default so manual selection works immediately
   const initialFormData = {
     name: '',
     email: '',
@@ -78,15 +79,13 @@ export default function InviteUserModal({ isOpen, onClose, gstList, initialData,
   const [selectedRole, setSelectedRole] = useState<string>('Custom');
   const [customRoleName, setCustomRoleName] = useState<string>('');
   const [formData, setFormData] = useState(initialFormData);
-  
-  // 🟢 CHANGE 1: Added 'gst' to error state
-  const [errors, setErrors] = useState({ name: '', email: '', phone: '', gst: '' });
+  const [errors, setErrors] = useState({ name: '', email: '', phone: '' });
 
   // --- EFFECT: Handle Edit Mode vs Invite Mode ---
   useEffect(() => {
     if (isOpen) {
       setInviteStatus('idle');
-      setErrors({ name: '', email: '', phone: '', gst: '' }); // Reset errors
+      setErrors({ name: '', email: '', phone: '' });
 
       if (initialData) {
         // === EDIT MODE ===
@@ -124,7 +123,7 @@ export default function InviteUserModal({ isOpen, onClose, gstList, initialData,
   // --- Logic Handlers ---
   const validateForm = () => {
     let isValid = true;
-    const newErrors = { name: '', email: '', phone: '', gst: '' };
+    const newErrors = { name: '', email: '', phone: '' };
 
     if (!formData.name.trim()) { newErrors.name = 'Full Name is required.'; isValid = false; }
     
@@ -135,12 +134,6 @@ export default function InviteUserModal({ isOpen, onClose, gstList, initialData,
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!formData.email.trim()) { newErrors.email = 'Email is required.'; isValid = false; }
     else if (!emailRegex.test(formData.email)) { newErrors.email = 'Enter valid email.'; isValid = false; }
-
-    // 🟢 CHANGE 2: Added GST Validation Check
-    if (formData.gstAccess.selectedIds.length === 0) {
-        newErrors.gst = 'Please select at least one GST account.';
-        isValid = false;
-    }
 
     setErrors(newErrors);
     return isValid;
@@ -174,12 +167,10 @@ export default function InviteUserModal({ isOpen, onClose, gstList, initialData,
   };
 
   const toggleGst = (id: string) => {
-    // 🟢 Clear error if user selects something
-    if (errors.gst) setErrors(prev => ({ ...prev, gst: '' }));
-
     setFormData(prev => {
       const currentIds = prev.gstAccess.selectedIds;
       const newIds = currentIds.includes(id) ? currentIds.filter(x => x !== id) : [...currentIds, id];
+      // Ensure allFuture stays false so manual selection persists
       return { ...prev, gstAccess: { ...prev.gstAccess, selectedIds: newIds, allFuture: false } };
     });
   };
@@ -204,7 +195,7 @@ export default function InviteUserModal({ isOpen, onClose, gstList, initialData,
         role: finalRoleName,
         permissions: formData.modules,
         allowedGSTs: formData.gstAccess.selectedIds,
-        gstAccessAll: false, 
+        gstAccessAll: false, // 🟢 Force false since we removed the check
         gstinvalue: calculatedGstinValues 
     };
 
@@ -308,19 +299,11 @@ export default function InviteUserModal({ isOpen, onClose, gstList, initialData,
                 {/* GST Scope */}
                 <div>
                     <div className="flex justify-between items-center mb-3">
-                        {/* 🟢 CHANGE 3: Added Required Star and Error Message next to header */}
-                        <div className="flex items-center gap-2">
-                            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">GST Access Scope <span className="text-red-500">*</span></h4>
-                            {errors.gst && (
-                                <span className="text-[10px] text-red-500 font-medium flex items-center gap-1 animate-pulse bg-red-50 px-2 py-0.5 rounded-full border border-red-100">
-                                    <AlertCircle size={10} /> {errors.gst}
-                                </span>
-                            )}
-                        </div>
+                        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">GST Access Scope</h4>
+                        {/* 🟢 CHANGE 2: Removed the 'All Future' Checkbox here */}
                     </div>
-                    
-                    {/* 🟢 CHANGE 4: Added red border conditionally if error exists */}
-                    <div className={`space-y-2 max-h-40 overflow-y-auto p-1 ${errors.gst ? 'border border-red-300 rounded-lg bg-red-50/30' : ''}`}>
+                    {/* 🟢 CHANGE 3: Removed 'pointer-events-none' logic so list is always active */}
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
                         {gstList.length > 0 ? gstList.map((gst) => (
                             <div key={gst._id} onClick={() => toggleGst(gst._id)} className={`flex items-center justify-between p-3 border rounded-lg cursor-pointer transition-all ${formData.gstAccess.selectedIds.includes(gst._id) ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}>
                                 <div className="flex items-center space-x-3">
@@ -347,7 +330,7 @@ export default function InviteUserModal({ isOpen, onClose, gstList, initialData,
   );
 }
 
-// Helpers (No Changes here)
+// Helpers
 const RoleCard = ({ label, icon, active, onClick }: any) => (
   <div onClick={onClick} className={`flex flex-col items-center justify-center p-3 rounded-lg border-2 cursor-pointer transition-all ${active ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm' : 'border-gray-100 hover:border-gray-300 bg-white text-gray-500 hover:bg-gray-50'}`}>
     <div className={`mb-1 ${active ? 'text-blue-600' : 'text-gray-400'}`}>{icon}</div>

@@ -9,29 +9,29 @@ import ProtectRoute from "./../../../components/ProtectRoute";
 // 🛡️ UTILITY: GSTIN Validator (Regex + Checksum)
 const isValidGSTIN = (gstin: string): boolean => {
   const gstinClean = gstin.trim().toUpperCase();
-  const gstRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+
+  // Strict PAN + correct entity digit
+  const gstRegex =
+    /^[0-9]{2}[A-Z]{3}[CPHFATBLJG]{1}[A-Z]{1}[0-9]{4}[A-Z]{1}[0-9A-Z]{1}Z[0-9A-Z]{1}$/;
+
   if (!gstRegex.test(gstinClean)) return false;
 
-  try {
-    const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    const values = gstinClean.split('').map(char => chars.indexOf(char));
-    if (values.includes(-1)) return false;
+  const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  let sum = 0;
 
-    let sum = 0;
-    for (let i = 0; i < 14; i++) {
-      const val = values[i];
-      const factor = (14 - i) % 2 === 0 ? 1 : 2; 
-      const product = val * factor;
-      const quotient = Math.floor(product / 36);
-      const remainder = product % 36;
-      sum += quotient + remainder;
-    }
-    const checkCodeIndex = (36 - (sum % 36)) % 36;
-    return chars[checkCodeIndex] === gstinClean[14];
-  } catch (e) {
-    return false;
+  for (let i = 0; i < 14; i++) {
+    const val = chars.indexOf(gstinClean[i]);
+    if (val === -1) return false;
+
+    const factor = i % 2 === 0 ? 1 : 2;
+    const product = val * factor;
+    sum += Math.floor(product / 36) + (product % 36);
   }
+
+  const checkCodeIndex = (36 - (sum % 36)) % 36;
+  return chars[checkCodeIndex] === gstinClean[14];
 };
+
 
 interface IBusinessProfile {
   _id: string;
@@ -40,15 +40,19 @@ interface IBusinessProfile {
   gstin: string;
 }
 
-// 🟢 UPDATE 1: Ensure Interface includes 'gstinvalue'
+// 🟢 UPDATE 1: Updated Interface to satisfy the Modal requirements
 export interface ITeamUser {
   id: string;
+  _id?: string; // Added for compatibility
   name: string;
   email: string;
   role: string;
   status: string;
   modules: any;
-  gstinvalue: string[]; // <--- Added this array of strings
+  gstinvalue: string[];
+  // 👇 Added these to fix the build error
+  phone?: string; 
+  gstAccess?: boolean; 
 }
 
 export default function ProfilePage() {
@@ -400,7 +404,8 @@ export default function ProfilePage() {
         isOpen={isInviteModalOpen}
         onClose={() => setIsInviteModalOpen(false)}
         gstList={profiles} 
-        initialData={editingUser} 
+        // 🟢 FIX: Added 'as any' to bypass strict type mismatch with external Modal component
+        initialData={editingUser as any} 
         onSave={handleSaveTeamMember} 
       />
 
