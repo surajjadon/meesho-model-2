@@ -1,0 +1,84 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H -p 7070 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: SSH Connection Test
+        run: |
+          echo "🔗 Testing connection to VPS on port 7070..."
+          ssh -i ~/.ssh/id_ed25519 -p 7070 -o StrictHostKeyChecking=no trixie@${{ secrets.VPS_HOST }} '
+            echo "✅ Connected successfully!"
+            echo "👤 User: $(whoami)"
+            echo "🖥️  Server: $(hostname)"
+          '
+
+      - name: Deploy Application
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -p 7070 -o StrictHostKeyChecking=no trixie@${{ secrets.VPS_HOST }} << 'ENDSSH'
+          set -e
+          
+          export GH_TOKEN='${{ secrets.GH_TOKEN }}'
+          
+          # Load NVM
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          
+          # Use Node v22.22.0
+          nvm use 22.22.0
+          
+          echo "================================================"
+          echo "🚀 Starting Deployment"
+          echo "================================================"
+          echo ""
+          echo "📋 Environment Info:"
+          echo "Node version: $(node --version)"
+          echo "npm version: $(npm --version)"
+          echo "PM2 version: $(pm2 --version)"
+          echo ""
+          
+          echo "📂 Navigating to project..."
+          cd /var/www/lebely-node
+          
+          echo "📥 Pulling latest code..."
+          git pull https://${GH_TOKEN}@github.com/Madquick-Private-Limited/lebely-node.git main
+          
+          echo ""
+          echo "================================================"
+          echo "🔧 Deploying Backend"
+          echo "================================================"
+          cd backend
+          echo "📦 Installing dependencies..."
+          npm install
+          echo "🔨 Building..."
+          echo "🔄 Restarting PM2..."
+          pm2 restart lebely-server || pm2 start dist/server.js --name lebely-server
+          
+          echo ""
+          echo "================================================"
+          echo "🎨 Deploying Frontend"
+          echo "================================================"
+          cd ../frontend
+          echo "📦 Installing dependencies..."
+          npm install
+          echo "🔨 Building..."
+          npm run build
+          ENDSSH
